@@ -12,23 +12,22 @@ import (
 	"golang.design/x/clipboard"
 )
 
-var (
-	message     string
-	messageFile string
-)
-
-func init() {
-	flag.StringVar(&message, "m", "", "Insert a message paragraph into the markdown")
-	flag.StringVar(&message, "message", "", "Insert a message paragraph into the markdown")
-	flag.StringVar(&messageFile, "f", "", "Insert a message paragraph from a file into the markdown")
-	flag.StringVar(&messageFile, "message-file", "", "Insert a message paragraph from a file into the markdown")
+type markdownEntry struct {
+	filePath string
+	message  string
 }
 
 func main() {
+	var messageFile string
+	var message string
+
+	flag.StringVar(&messageFile, "f", "", "Insert a message paragraph from a file into the markdown")
+	flag.StringVar(&message, "m", "", "Insert a message paragraph into the markdown")
+
 	flag.Usage = func() {
 		fmt.Println("Usage: ch [OPTIONS] [FILE_PATHS]...")
 		fmt.Println()
-		fmt.Println("Generate markdown for the specified files and directories.")
+		fmt.Println("Generate markdown for the specified files, directories, and messages.")
 		fmt.Println()
 		fmt.Println("Options:")
 		flag.PrintDefaults()
@@ -36,39 +35,44 @@ func main() {
 
 	flag.Parse()
 
-	if flag.NArg() == 0 {
-		flag.Usage()
-		os.Exit(1)
+	var entries []markdownEntry
+
+	for _, arg := range flag.Args() {
+		if messageFile != "" {
+			content, err := readMessageFile(messageFile)
+			if err != nil {
+				log.Fatal(err)
+			}
+			entries = append(entries, markdownEntry{message: content})
+			messageFile = ""
+		} else if message != "" {
+			entries = append(entries, markdownEntry{message: message})
+			message = ""
+		} else {
+			entries = append(entries, markdownEntry{filePath: arg})
+		}
 	}
 
 	var markdown strings.Builder
 
-	if message != "" {
-		markdown.WriteString(message + "\n\n")
-	} else if messageFile != "" {
-		content, err := readMessageFile(messageFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if content != "" {
-			markdown.WriteString(content + "\n\n")
-		}
-	}
-
-	for _, path := range flag.Args() {
-		err := processPath(path, &markdown)
-		if err != nil {
-			log.Fatal(err)
+	for _, entry := range entries {
+		if entry.message != "" {
+			markdown.WriteString(entry.message + "\n\n")
+		} else if entry.filePath != "" {
+			err := processPath(entry.filePath, &markdown)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 
-	err := clipboard.Init()
-	if err != nil {
-		log.Fatal(err)
+	if err := clipboard.Init(); err != nil {
+		log.Printf("Failed to initialize clipboard: %v", err)
+		saveMarkdownToFile(markdown.String())
+	} else {
+		clipboard.Write(clipboard.FmtText, []byte(markdown.String()))
+		fmt.Println("Markdown copied to the clipboard.")
 	}
-
-	clipboard.Write(clipboard.FmtText, []byte(markdown.String()))
-	fmt.Println("Markdown copied to the clipboard.")
 }
 
 func readMessageFile(path string) (string, error) {
@@ -111,22 +115,30 @@ func processPath(path string, markdown *strings.Builder) error {
 	}
 
 	if fileInfo.IsDir() {
-		files, err := ioutil.ReadDir(path)
-		if err != nil {
-			return err
-		}
-		for _, file := range files {
-			if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
-				err := generateMarkdown(filepath.Join(path, file.Name()), markdown)
-				if err != nil {
-					return err
-				}
+		return processDirectory(path, markdown)
+	}
+
+	if !strings.HasPrefix(fileInfo.Name(), ".") {
+		return generateMarkdown(path, markdown)
+	}
+
+	return nil
+}
+
+func processDirectory(dirPath string, markdown *strings.Builder) error {
+	files, err := ioutil.ReadDir(dirPath)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(dirPath, file.Name())
+		if file.IsDir() {
+			if err := processDirectory(filePath, markdown); err != nil {
+				return err
 			}
-		}
-	} else {
-		if !strings.HasPrefix(fileInfo.Name(), ".") {
-			err := generateMarkdown(path, markdown)
-			if err != nil {
+		} else if !strings.HasPrefix(file.Name(), ".") {
+			if err := generateMarkdown(filePath, markdown); err != nil {
 				return err
 			}
 		}
@@ -147,4 +159,20 @@ func generateMarkdown(filePath string, markdown *strings.Builder) error {
 	markdown.WriteString("\n```\n\n")
 
 	return nil
+}
+
+func saveMarkdownToFile(markdown string) {
+	tempFile, err := ioutil.TempFile("", "ch_markdown_*.md")
+	if err != nil {
+		log.Printf("Failed to create temporary file: %v", err)
+		return
+	}
+	defer tempFile.Close()
+
+	if _, err := tempFile.WriteString(markdown); err != nil {
+		log.Printf("Failed to write markdown to file: %v", err)
+		return
+	}
+
+	fmt.Printf("Markdown saved to file: %s\n", tempFile.Name())
 }
