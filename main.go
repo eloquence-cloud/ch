@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -10,6 +9,7 @@ import (
 	"strings"
 
 	"golang.design/x/clipboard"
+	"golang.org/x/term"
 )
 
 type markdownEntry struct {
@@ -18,80 +18,89 @@ type markdownEntry struct {
 }
 
 func main() {
-	var messageFile string
-	var message string
-
-	flag.StringVar(&messageFile, "f", "", "Insert a message paragraph from a file into the markdown")
-	flag.StringVar(&message, "m", "", "Insert a message paragraph into the markdown")
-
-	flag.Usage = printUsage
-	flag.Parse()
-
-	entries, err := processArgs(flag.Args())
+	// print usage if we got no args or just "--help"
+	if len(os.Args) == 1 || (len(os.Args) == 2 && os.Args[1] == "--help") {
+		printUsage()
+		return
+	}
+	entries, err := processArgs(os.Args[1:])
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	markdown := generateMarkdown(entries)
 
-	if err := clipboard.Init(); err != nil {
-		log.Printf("Failed to initialize clipboard: %v", err)
-		if err := saveMarkdownToFile(markdown, os.TempDir()); err != nil {
-			log.Fatalf("Failed to save markdown to file: %v", err)
-		}
+	if !isTerminal(os.Stdout) {
+		fmt.Println(markdown)
 	} else {
-		clipboard.Write(clipboard.FmtText, []byte(markdown))
-		fmt.Println("Markdown copied to the clipboard.")
+		if err := clipboard.Init(); err != nil {
+			log.Printf("Failed to initialize clipboard: %v", err)
+			if err := saveMarkdownToFile(markdown, os.TempDir()); err != nil {
+				log.Fatalf("Failed to save markdown to file: %v", err)
+			}
+		} else {
+			clipboard.Write(clipboard.FmtText, []byte(markdown))
+			fmt.Println("Markdown copied to the clipboard.")
+		}
 	}
 }
 
+func isTerminal(file *os.File) bool {
+	return term.IsTerminal(int(file.Fd()))
+}
+
 func printUsage() {
-	fmt.Println("Usage: ch [ file | directory |  -f \"message file\" | -m \"message\" ] ...")
+	fmt.Println("Usage: ch [@message_file | @ \"inline message\" | file | directory] ...")
 	fmt.Println()
-	fmt.Println("Generates an AI chat message containing the specified files, directories, and messages.")
-	fmt.Println("Copies the markdown to the clipboard.")
+	fmt.Println("ch is a tool for generating formatted markdown suitable for AI chat messages.")
+	fmt.Println("It processes a mix of message files, inline messages, files, and directories,")
+	fmt.Println("and combines them into a single markdown string.")
 	fmt.Println()
-	fmt.Println("The output markdown displays files as code blocks, optionally interspersing")
-	fmt.Println("these with messages in the order they appear on the command line.")
-	fmt.Println("Recursively process directories. Constructs relative paths by")
-	fmt.Println("stripping out any common prefix across the entire command line.")
+	fmt.Println("Messages and file contents are included in the order they appear in the arguments.")
+	fmt.Println("File contents are displayed as code blocks, while messages are treated as plaintext.")
 	fmt.Println()
-	fmt.Println("Files and directories can be remote paths, like user@host:/path/to/file.")
-	fmt.Println("These are retrieved via the ssh protocol.")
+	fmt.Println("Message files:")
+	fmt.Println("  @message_file.txt   Include the contents of 'message_file.txt' as a message.")
 	fmt.Println()
-	fmt.Println("The material from each message file is inserted as one or more paragraphs")
-	fmt.Println("ch searches for each message file in the following order:")
+	fmt.Println("Inline messages:")
+	fmt.Println("  @ \"Inline message\"   Include the specified text as an inline message.")
 	fmt.Println()
-	fmt.Println("  1. the provided path or name")
-	fmt.Println("  2. if the path has no extension, the full provided path or name with '.ch' added")
-	fmt.Println("  3. if those aren't found, and if the provided string is just a base filename")
-	fmt.Println("     with no extension, then ~/.ch/<provided name>.ch")
+	fmt.Println("Files and directories:")
+	fmt.Println("  file.go              Include the contents of 'file.go' as a code block.")
+	fmt.Println("  directory/           Recursively include all files in 'directory/' as code blocks.")
+	fmt.Println()
+	fmt.Println("ch searches for message files in the following order:")
+	fmt.Println("  1. The provided path or name")
+	fmt.Println("  2. If the path has no extension, the full provided path or name with '.ch' added")
+	fmt.Println("  3. If not found, and if the provided string is just a base filename with no")
+	fmt.Println("     extension, then ~/.ch/<provided_name>.ch")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  ch @message.txt file1.go @ \"Please review\" file2.go")
+	fmt.Println("  ch @ \"Here are the changes:\" @changes.txt src/")
 }
 
 func processArgs(args []string) ([]markdownEntry, error) {
 	var entries []markdownEntry
-	var messageFile, message string
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "-f" {
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("missing message file path")
+		if strings.HasPrefix(arg, "@") {
+			if arg == "@" {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("missing inline message")
+				}
+				message := args[i+1]
+				i++
+				entries = append(entries, markdownEntry{message: message})
+			} else {
+				messageFile := arg[1:]
+				content, err := readMessageFile(messageFile)
+				if err != nil {
+					return nil, err
+				}
+				entries = append(entries, markdownEntry{message: content})
 			}
-			messageFile = args[i+1]
-			i++
-			content, err := readMessageFile(messageFile)
-			if err != nil {
-				return nil, err
-			}
-			entries = append(entries, markdownEntry{message: content})
-		} else if arg == "-m" {
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("missing message")
-			}
-			message = args[i+1]
-			i++
-			entries = append(entries, markdownEntry{message: message})
 		} else {
 			entries = append(entries, markdownEntry{filePath: arg})
 		}
