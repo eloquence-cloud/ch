@@ -24,55 +24,80 @@ func main() {
 	flag.StringVar(&messageFile, "f", "", "Insert a message paragraph from a file into the markdown")
 	flag.StringVar(&message, "m", "", "Insert a message paragraph into the markdown")
 
-	flag.Usage = func() {
-		fmt.Println("Usage: ch [OPTIONS] [FILE_PATHS]...")
-		fmt.Println()
-		fmt.Println("Generate markdown for the specified files, directories, and messages.")
-		fmt.Println()
-		fmt.Println("Options:")
-		flag.PrintDefaults()
-	}
-
+	flag.Usage = printUsage
 	flag.Parse()
 
-	var entries []markdownEntry
+	entries, err := processArgs(flag.Args())
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	for _, arg := range flag.Args() {
-		if messageFile != "" {
+	markdown := generateMarkdown(entries)
+
+	if err := clipboard.Init(); err != nil {
+		log.Printf("Failed to initialize clipboard: %v", err)
+		if err := saveMarkdownToFile(markdown, os.TempDir()); err != nil {
+			log.Fatalf("Failed to save markdown to file: %v", err)
+		}
+	} else {
+		clipboard.Write(clipboard.FmtText, []byte(markdown))
+		fmt.Println("Markdown copied to the clipboard.")
+	}
+}
+
+func printUsage() {
+	fmt.Println("Usage: ch [ file | directory |  -f \"message file\" | -m \"message\" ] ...")
+	fmt.Println()
+	fmt.Println("Generates an AI chat message containing the specified files, directories, and messages.")
+	fmt.Println("Copies the markdown to the clipboard.")
+	fmt.Println()
+	fmt.Println("The output markdown displays files as code blocks, optionally interspersing")
+	fmt.Println("these with messages in the order they appear on the command line.")
+	fmt.Println("Recursively process directories. Constructs relative paths by")
+	fmt.Println("stripping out any common prefix across the entire command line.")
+	fmt.Println()
+	fmt.Println("Files and directories can be remote paths, like user@host:/path/to/file.")
+	fmt.Println("These are retrieved via the ssh protocol.")
+	fmt.Println()
+	fmt.Println("The material from each message file is inserted as one or more paragraphs")
+	fmt.Println("ch searches for each message file in the following order:")
+	fmt.Println()
+	fmt.Println("  1. the provided path or name")
+	fmt.Println("  2. if the path has no extension, the full provided path or name with '.ch' added")
+	fmt.Println("  3. if those aren't found, and if the provided string is just a base filename")
+	fmt.Println("     with no extension, then ~/.ch/<provided name>.ch")
+}
+
+func processArgs(args []string) ([]markdownEntry, error) {
+	var entries []markdownEntry
+	var messageFile, message string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-f" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("missing message file path")
+			}
+			messageFile = args[i+1]
+			i++
 			content, err := readMessageFile(messageFile)
 			if err != nil {
-				log.Fatal(err)
+				return nil, err
 			}
 			entries = append(entries, markdownEntry{message: content})
-			messageFile = ""
-		} else if message != "" {
+		} else if arg == "-m" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("missing message")
+			}
+			message = args[i+1]
+			i++
 			entries = append(entries, markdownEntry{message: message})
-			message = ""
 		} else {
 			entries = append(entries, markdownEntry{filePath: arg})
 		}
 	}
 
-	var markdown strings.Builder
-
-	for _, entry := range entries {
-		if entry.message != "" {
-			markdown.WriteString(entry.message + "\n\n")
-		} else if entry.filePath != "" {
-			err := processPath(entry.filePath, &markdown)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-
-	if err := clipboard.Init(); err != nil {
-		log.Printf("Failed to initialize clipboard: %v", err)
-		saveMarkdownToFile(markdown.String())
-	} else {
-		clipboard.Write(clipboard.FmtText, []byte(markdown.String()))
-		fmt.Println("Markdown copied to the clipboard.")
-	}
+	return entries, nil
 }
 
 func readMessageFile(path string) (string, error) {
@@ -108,6 +133,22 @@ func readFile(path string) (string, error) {
 	return string(content), nil
 }
 
+func generateMarkdown(entries []markdownEntry) string {
+	var markdown strings.Builder
+
+	for _, entry := range entries {
+		if entry.message != "" {
+			markdown.WriteString(entry.message + "\n\n")
+		} else if entry.filePath != "" {
+			if err := processPath(entry.filePath, &markdown); err != nil {
+				log.Printf("Failed to process path %s: %v", entry.filePath, err)
+			}
+		}
+	}
+
+	return markdown.String()
+}
+
 func processPath(path string, markdown *strings.Builder) error {
 	fileInfo, err := os.Stat(path)
 	if err != nil {
@@ -119,7 +160,7 @@ func processPath(path string, markdown *strings.Builder) error {
 	}
 
 	if !strings.HasPrefix(fileInfo.Name(), ".") {
-		return generateMarkdown(path, markdown)
+		return appendFileToMarkdown(path, markdown)
 	}
 
 	return nil
@@ -138,7 +179,7 @@ func processDirectory(dirPath string, markdown *strings.Builder) error {
 				return err
 			}
 		} else if !strings.HasPrefix(file.Name(), ".") {
-			if err := generateMarkdown(filePath, markdown); err != nil {
+			if err := appendFileToMarkdown(filePath, markdown); err != nil {
 				return err
 			}
 		}
@@ -147,7 +188,7 @@ func processDirectory(dirPath string, markdown *strings.Builder) error {
 	return nil
 }
 
-func generateMarkdown(filePath string, markdown *strings.Builder) error {
+func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
 	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return err
@@ -161,18 +202,17 @@ func generateMarkdown(filePath string, markdown *strings.Builder) error {
 	return nil
 }
 
-func saveMarkdownToFile(markdown string) {
-	tempFile, err := ioutil.TempFile("", "ch_markdown_*.md")
+func saveMarkdownToFile(markdown, dir string) error {
+	tempFile, err := ioutil.TempFile(dir, "ch_markdown_*.md")
 	if err != nil {
-		log.Printf("Failed to create temporary file: %v", err)
-		return
+		return fmt.Errorf("failed to create temporary file: %v", err)
 	}
 	defer tempFile.Close()
 
 	if _, err := tempFile.WriteString(markdown); err != nil {
-		log.Printf("Failed to write markdown to file: %v", err)
-		return
+		return fmt.Errorf("failed to write markdown to file: %v", err)
 	}
 
 	fmt.Printf("Markdown saved to file: %s\n", tempFile.Name())
+	return nil
 }
