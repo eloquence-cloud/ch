@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -9,7 +10,6 @@ import (
 	"strings"
 
 	"golang.design/x/clipboard"
-	"golang.org/x/term"
 )
 
 type markdownEntry struct {
@@ -18,35 +18,39 @@ type markdownEntry struct {
 }
 
 func main() {
-	// print usage if we got no args or just "--help"
-	if len(os.Args) == 1 || (len(os.Args) == 2 && os.Args[1] == "--help") {
+	copyToClipboard := flag.Bool("c", false, "Copy the generated markdown to the clipboard")
+	helpFlag := flag.Bool("help", false, "Show usage information")
+	flag.Parse()
+
+	if *helpFlag {
 		printUsage()
 		return
 	}
-	entries, err := processArgs(os.Args[1:])
+
+	args := flag.Args()
+	if len(args) == 0 {
+		printUsage()
+		return
+	}
+
+	entries, err := processArgs(args)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	markdown := generateMarkdown(entries)
 
-	if !isTerminal(os.Stdout) {
-		fmt.Println(markdown)
-	} else {
+	if *copyToClipboard {
 		if err := clipboard.Init(); err != nil {
 			log.Printf("Failed to initialize clipboard: %v", err)
-			if err := saveMarkdownToFile(markdown, os.TempDir()); err != nil {
-				log.Fatalf("Failed to save markdown to file: %v", err)
-			}
+			fmt.Println(markdown)
 		} else {
 			clipboard.Write(clipboard.FmtText, []byte(markdown))
 			fmt.Println("Markdown copied to the clipboard.")
 		}
+	} else {
+		fmt.Println(markdown)
 	}
-}
-
-func isTerminal(file *os.File) bool {
-	return term.IsTerminal(int(file.Fd()))
 }
 
 func printUsage() {
@@ -58,6 +62,9 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Messages and file contents are included in the order they appear in the arguments.")
 	fmt.Println("File contents are displayed as code blocks, while messages are treated as plaintext.")
+	fmt.Println()
+	fmt.Println("Flags:")
+	flag.PrintDefaults()
 	fmt.Println()
 	fmt.Println("Message files:")
 	fmt.Println("  @message_file.txt   Include the contents of 'message_file.txt' as a message.")
@@ -77,7 +84,7 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  ch @message.txt file1.go @ \"Please review\" file2.go")
-	fmt.Println("  ch @ \"Here are the changes:\" @changes.txt src/")
+	fmt.Println("  ch -c @ \"Here are the changes:\" @changes.txt src/")
 }
 
 func processArgs(args []string) ([]markdownEntry, error) {
