@@ -1,7 +1,25 @@
+// Copyright 2024 Dean Thompson dba Eloquence. All rights reserved.
+//
+// This file is part of the ch project.
+//
+// The ch project is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The ch project is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with the ch project. If not, see <https://www.gnu.org/licenses/>.
+//
+// For more information, please contact Eloquence at info@eloquence.cloud.
+
 package main
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,12 +31,12 @@ func TestProcessArgs(t *testing.T) {
 	tempDir := os.TempDir()
 	file1 := filepath.Join(tempDir, "file1.txt")
 	file2 := filepath.Join(tempDir, "file2.txt")
-	err := ioutil.WriteFile(file1, []byte("File 1 content"), 0644)
+	err := os.WriteFile(file1, []byte("File 1 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(file1)
-	err = ioutil.WriteFile(file2, []byte("File 2 content"), 0644)
+	err = os.WriteFile(file2, []byte("File 2 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +53,7 @@ func TestProcessArgs(t *testing.T) {
 
 	// Test with message file
 	messageFile := filepath.Join(tempDir, "message.txt")
-	err = ioutil.WriteFile(messageFile, []byte("Message from file"), 0644)
+	err = os.WriteFile(messageFile, []byte("Message from file"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,12 +84,12 @@ func TestProcessArgsWithInterspersedMessages(t *testing.T) {
 	tempDir := os.TempDir()
 	file1 := filepath.Join(tempDir, "file1.txt")
 	file2 := filepath.Join(tempDir, "file2.txt")
-	err := ioutil.WriteFile(file1, []byte("File 1 content"), 0644)
+	err := os.WriteFile(file1, []byte("File 1 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(file1)
-	err = ioutil.WriteFile(file2, []byte("File 2 content"), 0644)
+	err = os.WriteFile(file2, []byte("File 2 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,12 +98,12 @@ func TestProcessArgsWithInterspersedMessages(t *testing.T) {
 	// Create temporary message files
 	messageFile1 := filepath.Join(tempDir, "message1.txt")
 	messageFile2 := filepath.Join(tempDir, "message2.txt")
-	err = ioutil.WriteFile(messageFile1, []byte("Message 1"), 0644)
+	err = os.WriteFile(messageFile1, []byte("Message 1"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(messageFile1)
-	err = ioutil.WriteFile(messageFile2, []byte("Message 2"), 0644)
+	err = os.WriteFile(messageFile2, []byte("Message 2"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}

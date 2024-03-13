@@ -1,9 +1,27 @@
+// Copyright 2024 Dean Thompson dba Eloquence. All rights reserved.
+//
+// This file is part of the ch project.
+//
+// The ch project is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The ch project is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with the ch project. If not, see <https://www.gnu.org/licenses/>.
+//
+// For more information, please contact Eloquence at info@eloquence.cloud.
+
 package main
 
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -142,7 +160,7 @@ func readMessageFile(path string) (string, error) {
 }
 
 func readFile(path string) (string, error) {
-	content, err := ioutil.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -183,7 +201,7 @@ func processPath(path string, markdown *strings.Builder) error {
 }
 
 func processDirectory(dirPath string, markdown *strings.Builder) error {
-	files, err := ioutil.ReadDir(dirPath)
+	files, err := os.ReadDir(dirPath)
 	if err != nil {
 		return err
 	}
@@ -205,7 +223,7 @@ func processDirectory(dirPath string, markdown *strings.Builder) error {
 }
 
 func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
 	}
@@ -215,20 +233,5 @@ func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
 	markdown.WriteString(string(content))
 	markdown.WriteString("\n```\n\n")
 
-	return nil
-}
-
-func saveMarkdownToFile(markdown, dir string) error {
-	tempFile, err := ioutil.TempFile(dir, "ch_markdown_*.md")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %v", err)
-	}
-	defer tempFile.Close()
-
-	if _, err := tempFile.WriteString(markdown); err != nil {
-		return fmt.Errorf("failed to write markdown to file: %v", err)
-	}
-
-	fmt.Printf("Markdown saved to file: %s\n", tempFile.Name())
 	return nil
 }
