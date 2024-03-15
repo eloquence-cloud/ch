@@ -26,7 +26,7 @@ import (
 	"testing"
 )
 
-func TestProcessArgs(t *testing.T) {
+func TestProcessArguments(t *testing.T) {
 	// Create temporary files
 	tempDir := os.TempDir()
 	file1 := filepath.Join(tempDir, "file1.txt")
@@ -43,12 +43,12 @@ func TestProcessArgs(t *testing.T) {
 	defer os.Remove(file2)
 
 	// Test with file paths
-	entries, err := processArgs([]string{file1, file2})
+	entries, err := processArguments([]string{file1, file2})
 	if err != nil {
-		t.Fatalf("processArgs failed: %v", err)
+		t.Fatalf("processArguments failed: %v", err)
 	}
 	if len(entries) != 2 || entries[0].filePath != file1 || entries[1].filePath != file2 {
-		t.Errorf("processArgs returned unexpected entries: %v", entries)
+		t.Errorf("processArguments returned unexpected entries: %v", entries)
 	}
 
 	// Test with message file
@@ -59,27 +59,25 @@ func TestProcessArgs(t *testing.T) {
 	}
 	defer os.Remove(messageFile)
 
-	entries, err = processArgs([]string{"@" + messageFile})
+	entries, err = processArguments([]string{"@" + messageFile})
 	if err != nil {
-		t.Fatalf("processArgs failed: %v", err)
+		t.Fatalf("processArguments failed: %v", err)
 	}
 	if len(entries) != 1 || entries[0].message != "Message from file" {
-		t.Errorf("processArgs returned unexpected entries: %v", entries)
+		t.Errorf("processArguments returned unexpected entries: %v", entries)
 	}
 
 	// Test with inline message
-	entries, err = processArgs([]string{"@", "Inline message"})
+	entries, err = processArguments([]string{"@", "Inline message"})
 	if err != nil {
-		t.Fatalf("processArgs failed: %v", err)
+		t.Fatalf("processArguments failed: %v", err)
 	}
 	if len(entries) != 1 || entries[0].message != "Inline message" {
-		t.Errorf("processArgs returned unexpected entries: %v", entries)
+		t.Errorf("processArguments returned unexpected entries: %v", entries)
 	}
 }
 
-// ... (other test functions remain unchanged)
-
-func TestProcessArgsWithInterspersedMessages(t *testing.T) {
+func TestProcessArgumentsWithInterspersedMessages(t *testing.T) {
 	// Create temporary files
 	tempDir := os.TempDir()
 	file1 := filepath.Join(tempDir, "file1.txt")
@@ -111,9 +109,9 @@ func TestProcessArgsWithInterspersedMessages(t *testing.T) {
 
 	// Test with interspersed messages
 	args := []string{"@" + messageFile1, file1, "@", "Inline message", file2, "@" + messageFile2}
-	entries, err := processArgs(args)
+	entries, err := processArguments(args)
 	if err != nil {
-		t.Fatalf("processArgs failed: %v", err)
+		t.Fatalf("processArguments failed: %v", err)
 	}
 
 	expected := []markdownEntry{
@@ -125,6 +123,6 @@ func TestProcessArgsWithInterspersedMessages(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processArgs returned unexpected entries.\nExpected: %v\nGot: %v", expected, entries)
+		t.Errorf("processArguments returned unexpected entries.\nExpected: %v\nGot: %v", expected, entries)
 	}
 }
