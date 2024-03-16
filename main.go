@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -33,223 +34,106 @@ import (
 type markdownEntry struct {
 	filePath string
 	message  string
+	output   string
 }
 
-func processMessageFile(filePath string) (string, error) {
-	// Check if the provided path exists
-	if _, err := os.Stat(filePath); err == nil {
-		return readFile(filePath)
-	}
-
-	// Check if the provided path with .ch extension exists
-	pathWithExt := filePath + ".ch"
-	if _, err := os.Stat(pathWithExt); err == nil {
-		return readFile(pathWithExt)
-	}
-
-	// Check if the provided name exists in ~/.ch directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	pathInHome := filepath.Join(homeDir, ".ch", filepath.Base(filePath)+".ch")
-	if _, err := os.Stat(pathInHome); err == nil {
-		return readFile(pathInHome)
-	}
-
-	return "", fmt.Errorf("message file not found: %s", filePath)
+func (e markdownEntry) String() string {
+	return fmt.Sprintf("{filePath: %q, message: %q, output: %q}", e.filePath, e.message, e.output)
 }
 
-func processInlineMessage(message string) markdownEntry {
-	return markdownEntry{message: message}
+type subcommand struct {
+	name string
+	fn   func(args []string) (markdownEntry, error)
 }
 
-func processArguments(args []string) ([]markdownEntry, error) {
+var subcommands = []subcommand{
+	{"say", saySub},
+	{"attach", attachSub},
+	{"insert", insertSub},
+	{"exec", execSub},
+}
+
+//////////// processing of subcommands ///////////////
+
+func processSubcommands(args []string) ([]markdownEntry, error) {
 	var entries []markdownEntry
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if strings.HasPrefix(arg, "@") {
-			if arg == "@" {
-				if i+1 >= len(args) {
-					return nil, fmt.Errorf("missing inline message")
-				}
-				message := args[i+1]
-				i++
-				entries = append(entries, processInlineMessage(message))
-			} else {
-				messageFile := arg[1:]
-				content, err := processMessageFile(messageFile)
-				if err != nil {
-					return nil, err
-				}
-				entries = append(entries, markdownEntry{message: content})
+	var accumCommand []string
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if strings.HasSuffix(arg, ",") {
+			argWithoutComma := strings.TrimSuffix(arg, ",")
+			if len(argWithoutComma) > 0 {
+				accumCommand = append(accumCommand, argWithoutComma)
 			}
+			entry, err := executeSubcommand(accumCommand)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
+			accumCommand = nil
 		} else {
-			entries = append(entries, markdownEntry{filePath: arg})
+			accumCommand = append(accumCommand, arg)
 		}
 	}
-
+	if len(accumCommand) > 0 {
+		entry, err := executeSubcommand(accumCommand)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
 	return entries, nil
 }
 
-func main() {
-	copyToClipboard := flag.Bool("c", false, "Copy the generated markdown to the clipboard")
-	outputFile := flag.String("o", "", "Write the output to the specified file")
-	helpFlag := flag.Bool("help", false, "Show usage information")
-	flag.Parse()
-
-	if *helpFlag {
-		printUsage()
-		return
+func executeSubcommand(args []string) (markdownEntry, error) {
+	if len(args) == 0 {
+		return markdownEntry{}, fmt.Errorf("no subcommand provided")
 	}
-
-	entries, err := processArguments(flag.Args())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	markdown := generateMarkdown(entries)
-
-	if *copyToClipboard {
-		if err := clipboard.Init(); err != nil {
-			log.Printf("Failed to initialize clipboard: %v", err)
-			fmt.Println(markdown)
-		} else {
-			clipboard.Write(clipboard.FmtText, []byte(markdown))
-			fmt.Println("Markdown copied to the clipboard.")
-		}
-	} else if *outputFile != "" {
-		if err := os.WriteFile(*outputFile, []byte(markdown), 0644); err != nil {
-			log.Printf("Failed to write output to file: %v", err)
-		} else {
-			fmt.Printf("Markdown written to file: %s\n", *outputFile)
-		}
-	} else {
-		fmt.Println(markdown)
-	}
-}
-
-func printUsage() {
-	fmt.Println("Usage: ch [@message_file | @ \"inline message\" | file | directory] ...")
-	fmt.Println()
-	fmt.Println("ch is a tool for generating formatted markdown suitable for AI chat messages.")
-	fmt.Println("It processes a mix of message files, inline messages, files, and directories,")
-	fmt.Println("and combines them into a single markdown string.")
-	fmt.Println()
-	fmt.Println("Messages and file contents are included in the order they appear in the arguments.")
-	fmt.Println("File contents are displayed as code blocks, while messages are treated as plaintext.")
-	fmt.Println()
-	fmt.Println("Flags:")
-	flag.PrintDefaults()
-	fmt.Println()
-	fmt.Println("Message files:")
-	fmt.Println("  @message_file.txt   Include the contents of 'message_file.txt' as a message.")
-	fmt.Println()
-	fmt.Println("Inline messages:")
-	fmt.Println("  @ \"Inline message\"   Include the specified text as an inline message.")
-	fmt.Println()
-	fmt.Println("Files and directories:")
-	fmt.Println("  file.go              Include the contents of 'file.go' as a code block.")
-	fmt.Println("  directory/           Recursively include all files in 'directory/' as code blocks.")
-	fmt.Println()
-	fmt.Println("ch searches for message files in the following order:")
-	fmt.Println("  1. The provided path or name")
-	fmt.Println("  2. If the path has no extension, the full provided path or name with '.ch' added")
-	fmt.Println("  3. If not found, and if the provided string is just a base filename with no")
-	fmt.Println("     extension, then ~/.ch/<provided_name>.ch")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  ch @message.txt file1.go @ \"Please review\" file2.go")
-	fmt.Println("  ch -c @ \"Here are the changes:\" @changes.txt src/")
-}
-
-// Upcoming
-// func printUsage() {
-// 	fmt.Println("ch - A tool for constructing chat messages for easy pasting into AI chat UIs.")
-// 	fmt.Println()
-// 	fmt.Println("ch allows you to combine messages, file contents, and command outputs into a")
-// 	fmt.Println("formatted markdown suitable for AI chat interactions. It provides a flexible")
-// 	fmt.Println("and extensible syntax for creating chat messages with ease.")
-// 	fmt.Println()
-// 	fmt.Println("Usage: ch [flags] subcommand [, subcommand ...]")
-// 	fmt.Println()
-// 	fmt.Println("Flags (one of -c or -o is required):")
-// 	fmt.Println("  -c           Copy the generated markdown to the clipboard")
-// 	fmt.Println("  -o file      Write the output to the specified file")
-// 	fmt.Println()
-// 	fmt.Println("Subcommands:")
-// 	fmt.Println("  say message       Emit a message (replace @<space>)")
-// 	fmt.Println("  attach path       Attach a file or directory of files (replace bare path)")
-// 	fmt.Println("  insert file       Insert the contents of a file (replace @file)")
-// 	fmt.Println("  exec command      Execute a command (pass command line to bash)")
-// 	fmt.Println()
-// 	fmt.Println("Custom Subcommands:")
-// 	fmt.Println("  To create a new subcommand, place either commandname.ch or commandname.sh")
-// 	fmt.Println("  in ~/.ch/commands directory.")
-// 	fmt.Println()
-// 	fmt.Println("  A .ch file contains a sequence of ch commands separated by either newline or comma.")
-// 	fmt.Println("  Arguments can be substituted by $1, $2, etc.")
-// 	fmt.Println("  Flags can be substituted by $flagname.")
-// 	fmt.Println()
-// 	fmt.Println("  Comma separation rules:")
-// 	fmt.Println("  - A comma at the end of a word ends that command and is not included in the word.")
-// 	fmt.Println("  - A comma alone in a word ends that command and is not included as a word.")
-// 	fmt.Println("  - A comma within a word is just part of that word.")
-// 	fmt.Println()
-// 	fmt.Println("Examples:")
-// 	fmt.Println("  ch -c say \"Please review\" attach file1.go, say \"Thank you!\"")
-// 	fmt.Println("  ch -o output.md say \"Here are the changes:\" insert changes.txt attach src/")
-// 	fmt.Println("  ch -c exec \"ls -l\" say \"Directory listing:\" attach .")
-// }
-
-func readMessageFile(path string) (string, error) {
-	// Check if the provided path exists
-	if _, err := os.Stat(path); err == nil {
-		return readFile(path)
-	}
-
-	// Check if the provided path with .ch extension exists
-	pathWithExt := path + ".ch"
-	if _, err := os.Stat(pathWithExt); err == nil {
-		return readFile(pathWithExt)
-	}
-
-	// Check if the provided name exists in ~/.ch directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	pathInHome := filepath.Join(homeDir, ".ch", filepath.Base(path)+".ch")
-	if _, err := os.Stat(pathInHome); err == nil {
-		return readFile(pathInHome)
-	}
-
-	return "", fmt.Errorf("message file not found: %s", path)
-}
-
-func readFile(path string) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
-}
-
-func generateMarkdown(entries []markdownEntry) string {
-	var markdown strings.Builder
-
-	for _, entry := range entries {
-		if entry.message != "" {
-			markdown.WriteString(entry.message + "\n\n")
-		} else if entry.filePath != "" {
-			if err := processPath(entry.filePath, &markdown); err != nil {
-				log.Printf("Failed to process path %s: %v", entry.filePath, err)
-			}
+	command := args[0]
+	var matches []subcommand
+	for _, sub := range subcommands {
+		if strings.HasPrefix(sub.name, command) {
+			matches = append(matches, sub)
 		}
 	}
+	if len(matches) == 0 {
+		return markdownEntry{}, fmt.Errorf("unknown subcommand: %s", command)
+	}
+	if len(matches) > 1 {
+		return markdownEntry{}, fmt.Errorf("ambiguous subcommand: %s", command)
+	}
+	return matches[0].fn(args[1:])
+}
 
-	return markdown.String()
+func saySub(args []string) (markdownEntry, error) {
+	message := strings.Join(args, " ")
+	return markdownEntry{message: message}, nil
+}
+
+func attachSub(args []string) (markdownEntry, error) {
+	filePath := args[0]
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return markdownEntry{}, fmt.Errorf("file does not exist: %s", filePath)
+	}
+	return markdownEntry{filePath: filePath}, nil
+}
+
+func insertSub(args []string) (markdownEntry, error) {
+	file := args[0]
+	content, err := readFile(file)
+	if err != nil {
+		return markdownEntry{}, err
+	}
+	return markdownEntry{message: content}, nil
+}
+
+func execSub(args []string) (markdownEntry, error) {
+	cmd := exec.Command(args[0], args[1:]...)
+	output, err := cmd.Output()
+	if err != nil {
+		return markdownEntry{}, fmt.Errorf("command execution failed: %v", err)
+	}
+	return markdownEntry{output: string(output)}, nil
 }
 
 func processPath(path string, markdown *strings.Builder) error {
@@ -297,10 +181,147 @@ func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
 		return err
 	}
 
-	markdown.WriteString(fmt.Sprintf("\n`%s`\n\n", filePath))
+	markdown.WriteString(fmt.Sprintf("`%s`\n", filePath))
 	markdown.WriteString("```\n")
 	markdown.WriteString(string(content))
-	markdown.WriteString("\n```\n\n")
+	markdown.WriteString("```\n\n")
 
 	return nil
+}
+
+func readFile(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+//////////// generation of markdown ///////////////
+
+func generateMarkdown(entries []markdownEntry) string {
+	var markdown strings.Builder
+
+	for _, entry := range entries {
+		if entry.message != "" {
+			markdown.WriteString(entry.message + "\n\n")
+		} else if entry.filePath != "" {
+			if err := processPath(entry.filePath, &markdown); err != nil {
+				log.Printf("Failed to process path %s: %v", entry.filePath, err)
+			}
+		} else if entry.output != "" {
+			markdown.WriteString(entry.output + "\n\n")
+		}
+	}
+
+	return strings.TrimSpace(markdown.String()) + "\n"
+}
+
+//////////// main ///////////////
+
+func printUsage() {
+	fmt.Println("ch - A tool for constructing chat messages for easy pasting into AI chat UIs.")
+	fmt.Println()
+	fmt.Println("ch allows you to combine messages, file contents, and command outputs into a")
+	fmt.Println("formatted markdown suitable for AI chat interactions. It provides a flexible")
+	fmt.Println("and extensible syntax for creating chat messages with ease.")
+	fmt.Println()
+	fmt.Println("Usage: ch [flags] subcommand [, subcommand ...]")
+	fmt.Println()
+	fmt.Println("Flags (one of -c or -o is required):")
+	fmt.Println("  -c           Copy the generated markdown to the clipboard")
+	fmt.Println("  -o file      Write the output to the specified file")
+	fmt.Println()
+	fmt.Println("Subcommands:")
+	fmt.Println("  say message       Emit a message (replace @<space>)")
+	fmt.Println("  attach path       Attach a file or directory of files (replace bare path)")
+	fmt.Println("  insert file       Insert the contents of a file (replace @file)")
+	fmt.Println("  exec command      Execute a command (pass command line to bash)")
+	fmt.Println()
+	fmt.Println("Comma separation rules:")
+	fmt.Println("  - A comma at the end of a word ends that command and is not included in the word.")
+	fmt.Println("  - A comma alone in a word ends that command and is not included as a word.")
+	fmt.Println("  - A comma within a word is just part of that word.")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  ch -c say \"Please review\", attach file1.go, say \"Thank you!\"")
+	fmt.Println("  ch -o output.md say \"Here are the changes:\", insert changes.txt, attach src/")
+	fmt.Println("  ch -c exec \"ls -l\", say \"Directory listing:\", attach .")
+}
+
+// Upcoming
+// func printUsage() {
+// 	fmt.Println("ch - A tool for constructing chat messages for easy pasting into AI chat UIs.")
+// 	fmt.Println()
+// 	fmt.Println("ch allows you to combine messages, file contents, and command outputs into a")
+// 	fmt.Println("formatted markdown suitable for AI chat interactions. It provides a flexible")
+// 	fmt.Println("and extensible syntax for creating chat messages with ease.")
+// 	fmt.Println()
+// 	fmt.Println("Usage: ch [flags] subcommand [, subcommand ...]")
+// 	fmt.Println()
+// 	fmt.Println("Flags (one of -c or -o is required):")
+// 	fmt.Println("  -c           Copy the generated markdown to the clipboard")
+// 	fmt.Println("  -o file      Write the output to the specified file")
+// 	fmt.Println()
+// 	fmt.Println("Subcommands:")
+// 	fmt.Println("  say message       Emit a message (replace @<space>)")
+// 	fmt.Println("  attach path       Attach a file or directory of files (replace bare path)")
+// 	fmt.Println("  insert file       Insert the contents of a file (replace @file)")
+// 	fmt.Println("  exec command      Execute a command (pass command line to bash)")
+// 	fmt.Println()
+// 	fmt.Println("Custom Subcommands:")
+// 	fmt.Println("  To create a new subcommand, place either commandname.ch or commandname.sh")
+// 	fmt.Println("  in ~/.ch/commands directory.")
+// 	fmt.Println()
+// 	fmt.Println("  A .ch file contains a sequence of ch commands separated by either newline or comma.")
+// 	fmt.Println("  Arguments can be substituted by $1, $2, etc.")
+// 	fmt.Println("  Flags can be substituted by $flagname.")
+// 	fmt.Println()
+// 	fmt.Println("  Comma separation rules:")
+// 	fmt.Println("  - A comma at the end of a word ends that command and is not included in the word.")
+// 	fmt.Println("  - A comma alone in a word ends that command and is not included as a word.")
+// 	fmt.Println("  - A comma within a word is just part of that word.")
+// 	fmt.Println()
+// 	fmt.Println("Examples:")
+// 	fmt.Println("  ch -c say \"Please review\" attach file1.go, say \"Thank you!\"")
+// 	fmt.Println("  ch -o output.md say \"Here are the changes:\" insert changes.txt attach src/")
+// 	fmt.Println("  ch -c exec \"ls -l\" say \"Directory listing:\" attach .")
+// }
+
+func main() {
+	copyToClipboard := flag.Bool("c", false, "Copy the generated markdown to the clipboard")
+	outputFile := flag.String("o", "", "Write the output to the specified file")
+	helpFlag := flag.Bool("help", false, "Show usage information")
+	flag.Parse()
+
+	if *helpFlag {
+		printUsage()
+		return
+	}
+
+	subcommands := flag.Args()
+	entries, err := processSubcommands(subcommands)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	markdown := generateMarkdown(entries)
+
+	if *copyToClipboard {
+		if err := clipboard.Init(); err != nil {
+			log.Printf("Failed to initialize clipboard: %v", err)
+			fmt.Println(markdown)
+		} else {
+			clipboard.Write(clipboard.FmtText, []byte(markdown))
+			fmt.Println("Markdown copied to the clipboard.")
+		}
+	} else if *outputFile != "" {
+		if err := os.WriteFile(*outputFile, []byte(markdown), 0644); err != nil {
+			log.Printf("Failed to write output to file: %v", err)
+		} else {
+			fmt.Printf("Markdown written to file: %s\n", *outputFile)
+		}
+	} else {
+		fmt.Println(markdown)
+	}
 }
