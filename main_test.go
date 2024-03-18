@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"golang.design/x/clipboard"
 )
 
 func TestProcessSubcommands(t *testing.T) {
@@ -164,6 +167,21 @@ func TestAttachSub(t *testing.T) {
 	}
 }
 
+func TestPasteSub(t *testing.T) {
+	// Set clipboard content for testing
+	clipboard.Write(clipboard.FmtText, []byte("Clipboard content"))
+
+	entries, err := pasteSub(nil)
+	if err != nil {
+		t.Fatalf("pasteSub failed: %v", err)
+	}
+
+	expected := []markdownEntry{{message: "Clipboard content"}}
+	if !reflect.DeepEqual(entries, expected) {
+		t.Errorf("pasteSub returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
+	}
+}
+
 func TestGenerateMarkdown(t *testing.T) {
 	// Create a temporary directory for testing
 	tempDir, err := os.MkdirTemp("", "test")
@@ -206,4 +224,20 @@ func TestGenerateMarkdown(t *testing.T) {
 	if markdown != expected {
 		t.Errorf("generateMarkdown returned unexpected markdown.\nExpected:\n%s\n  Actual:\n%s", expected, markdown)
 	}
+}
+
+func TestMain(m *testing.M) {
+	// Initialize the clipboard before running the tests
+	if err := clipboard.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize clipboard: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Run the tests
+	exitCode := m.Run()
+
+	// Clean up the clipboard after the tests are done
+	clipboard.Write(clipboard.FmtText, nil)
+
+	os.Exit(exitCode)
 }

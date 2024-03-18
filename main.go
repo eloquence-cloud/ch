@@ -51,6 +51,7 @@ var subcommands = []subcommand{
 	{"attach", attachSub},
 	{"insert", insertSub},
 	{"exec", execSub},
+	{"paste", pasteSub},
 }
 
 //////////// processing of subcommands ///////////////
@@ -140,6 +141,11 @@ func execSub(args []string) ([]markdownEntry, error) {
 		return []markdownEntry{}, fmt.Errorf("command execution failed: %v", err)
 	}
 	return []markdownEntry{{output: string(output)}}, nil
+}
+
+func pasteSub(args []string) ([]markdownEntry, error) {
+	content := string(clipboard.Read(clipboard.FmtText))
+	return []markdownEntry{{message: content}}, nil
 }
 
 func processPath(path string, markdown *strings.Builder) error {
@@ -243,6 +249,7 @@ func printUsage() {
 	fmt.Println("  attach path       Attach a file or directory of files (replace bare path)")
 	fmt.Println("  insert file       Insert the contents of a file (replace @file)")
 	fmt.Println("  exec command      Execute a command (pass command line to bash)")
+	fmt.Println("  paste             Insert the contents of the clipboard")
 	fmt.Println()
 	fmt.Println("Comma separation rules:")
 	fmt.Println("  - A comma at the end of a word ends that command and is not included in the word.")
@@ -305,6 +312,10 @@ func main() {
 		return
 	}
 
+	if err := clipboard.Init(); err != nil {
+		log.Fatalf("Failed to initialize clipboard: %v", err)
+	}
+
 	subcommands := flag.Args()
 	entries, err := processSubcommands(subcommands)
 	if err != nil {
@@ -314,13 +325,8 @@ func main() {
 	markdown := generateMarkdown(entries)
 
 	if *copyToClipboard {
-		if err := clipboard.Init(); err != nil {
-			log.Printf("Failed to initialize clipboard: %v", err)
-			fmt.Println(markdown)
-		} else {
-			clipboard.Write(clipboard.FmtText, []byte(markdown))
-			fmt.Println("Markdown copied to the clipboard.")
-		}
+		clipboard.Write(clipboard.FmtText, []byte(markdown))
+		fmt.Println("Markdown copied to the clipboard.")
 	} else if *outputFile != "" {
 		if err := os.WriteFile(*outputFile, []byte(markdown), 0644); err != nil {
 			log.Printf("Failed to write output to file: %v", err)
