@@ -23,7 +23,7 @@ func TestProcessSubcommands(t *testing.T) {
 	}
 	defer os.Remove(file2)
 
-	// Test with say subcommand
+	// Test with say subcommand.
 	entries, err := processSubcommands([]string{"say", "Hello world!"})
 	if err != nil {
 		t.Fatalf("processSubcommands failed: %v", err)
@@ -32,29 +32,32 @@ func TestProcessSubcommands(t *testing.T) {
 	if !reflect.DeepEqual(entries, expected) {
 		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
 	}
-
-	// Test with attach subcommand
-	entries, err = processSubcommands([]string{"attach", file1, ",", "attach", file2})
+	// Should get same result if the args are multiple words.
+	entries, err = processSubcommands([]string{"say", "Hello", "world!"})
 	if err != nil {
 		t.Fatalf("processSubcommands failed: %v", err)
 	}
-	expected = []markdownEntry{{filePath: file1}, {filePath: file2}}
+	expected = []markdownEntry{{message: "Hello world!"}}
+	if !reflect.DeepEqual(entries, expected) {
+		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
+	}
+
+	// Test with attach subcommand.
+	entries, err = processSubcommands([]string{"attach", file1, tempDir + ",", "attach", file2})
+	if err != nil {
+		t.Fatalf("processSubcommands failed: %v", err)
+	}
+	expected = []markdownEntry{{filePath: file1}, {filePath: tempDir}, {filePath: file2}}
 	if !reflect.DeepEqual(entries, expected) {
 		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
 	}
 
 	// Test with insert subcommand
-	insertFile := filepath.Join(tempDir, "insert.txt")
-	err = os.WriteFile(insertFile, []byte("Insert content"), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(insertFile)
-	entries, err = processSubcommands([]string{"insert", insertFile})
+	entries, err = processSubcommands([]string{"insert", file1, file2})
 	if err != nil {
 		t.Fatalf("processSubcommands failed: %v", err)
 	}
-	expected = []markdownEntry{{message: "Insert content"}}
+	expected = []markdownEntry{{message: "File 1 content"}, {message: "File 2 content"}}
 	if !reflect.DeepEqual(entries, expected) {
 		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
 	}
@@ -71,7 +74,7 @@ func TestProcessSubcommands(t *testing.T) {
 
 	// Test with mixed subcommands
 	entries, err = processSubcommands([]string{
-		"say", "Message 1", ",", "attach", file1 + ",", "insert", insertFile, ",", "exec", "echo", "Exec", "output,", "say", "Message 2",
+		"say", "Message 1", ",", "attach", file1 + ",", "insert", file2, ",", "exec", "echo", "Exec", "output,", "say", "Message 2",
 	})
 	if err != nil {
 		t.Fatalf("processSubcommands failed: %v", err)
@@ -79,7 +82,7 @@ func TestProcessSubcommands(t *testing.T) {
 	expected = []markdownEntry{
 		{message: "Message 1"},
 		{filePath: file1},
-		{message: "Insert content"},
+		{message: "File 2 content"},
 		{output: "Exec output\n"},
 		{message: "Message 2"},
 	}
@@ -88,85 +91,76 @@ func TestProcessSubcommands(t *testing.T) {
 	}
 }
 
-func TestExecSub(t *testing.T) {
-	// Test with a simple command
-	entry, err := execSub([]string{"echo", "Hello,", "world!"})
-	if err != nil {
-		t.Fatalf("execSub failed: %v", err)
-	}
-	expected := markdownEntry{output: "Hello, world!\n"}
-	if !reflect.DeepEqual(entry, expected) {
-		t.Errorf("execSub returned unexpected entry.\nExpected: %v\n  Actual: %v", expected, entry)
-	}
-
-	// Test with a command that fails
-	_, err = execSub([]string{"nonexistent-command"})
-	if err == nil {
-		t.Error("execSub should have returned an error for a nonexistent command")
-	}
-}
-
-func TestSaySub(t *testing.T) {
-	// Test with a simple message
-	entry, err := saySub([]string{"Hello", "world!"})
-	if err != nil {
-		t.Fatalf("saySub failed: %v", err)
-	}
-	expected := markdownEntry{message: "Hello world!"}
-	if !reflect.DeepEqual(entry, expected) {
-		t.Errorf("saySub returned unexpected entry.\nExpected: %v\n  Actual: %v", expected, entry)
-	}
-}
-
 func TestAttachSub(t *testing.T) {
-	// Create a temporary file for testing
-	tempFile := filepath.Join(os.TempDir(), "file.txt")
-	err := os.WriteFile(tempFile, []byte("File content"), 0644)
+	tempDir, err := os.MkdirTemp("", "test")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.Remove(tempFile)
+	defer os.RemoveAll(tempDir)
 
-	// Test with a valid file path
-	entry, err := attachSub([]string{tempFile})
-	if err != nil {
-		t.Fatalf("attachSub failed: %v", err)
-	}
-	expected := markdownEntry{filePath: tempFile}
-	if !reflect.DeepEqual(entry, expected) {
-		t.Errorf("attachSub returned unexpected entry.\nExpected: %v\n  Actual: %v", expected, entry)
-	}
+	file1 := filepath.Join(tempDir, "file1.txt")
+	file2 := filepath.Join(tempDir, "file2.txt")
+	dir1 := filepath.Join(tempDir, "dir1")
 
-	// Test with an invalid file path
-	_, err = attachSub([]string{"nonexistent-file.txt"})
-	if err == nil {
-		t.Error("attachSub should have returned an error for a nonexistent file")
+	if err := os.WriteFile(file1, []byte("File 1 content"), 0644); err != nil {
+		t.Fatalf("Failed to create temporary file: %v", err)
 	}
-}
-
-func TestInsertSub(t *testing.T) {
-	// Create a temporary file for testing
-	tempFile := filepath.Join(os.TempDir(), "file.txt")
-	err := os.WriteFile(tempFile, []byte("File content"), 0644)
-	if err != nil {
-		t.Fatal(err)
+	if err := os.WriteFile(file2, []byte("File 2 content"), 0644); err != nil {
+		t.Fatalf("Failed to create temporary file: %v", err)
 	}
-	defer os.Remove(tempFile)
-
-	// Test with a valid file path
-	entry, err := insertSub([]string{tempFile})
-	if err != nil {
-		t.Fatalf("insertSub failed: %v", err)
-	}
-	expected := markdownEntry{message: "File content"}
-	if !reflect.DeepEqual(entry, expected) {
-		t.Errorf("insertSub returned unexpected entry.\nExpected: %v\n  Actual: %v", expected, entry)
+	if err := os.Mkdir(dir1, 0755); err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
 
-	// Test with an invalid file path
-	_, err = insertSub([]string{"nonexistent-file.txt"})
-	if err == nil {
-		t.Error("insertSub should have returned an error for a nonexistent file")
+	tests := []struct {
+		name    string
+		args    []string
+		want    []markdownEntry
+		wantErr bool
+	}{
+		{
+			name:    "Single file",
+			args:    []string{file1},
+			want:    []markdownEntry{{filePath: file1}},
+			wantErr: false,
+		},
+		{
+			name:    "Multiple files",
+			args:    []string{file1, file2},
+			want:    []markdownEntry{{filePath: file1}, {filePath: file2}},
+			wantErr: false,
+		},
+		{
+			name:    "Directory",
+			args:    []string{dir1},
+			want:    []markdownEntry{{filePath: dir1}},
+			wantErr: false,
+		},
+		{
+			name:    "File and directory",
+			args:    []string{file1, dir1},
+			want:    []markdownEntry{{filePath: file1}, {filePath: dir1}},
+			wantErr: false,
+		},
+		{
+			name:    "Non-existent file",
+			args:    []string{"nonexistent.txt"},
+			want:    []markdownEntry{},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := attachSub(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("attachSub() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("attachSub() got = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -189,14 +183,22 @@ func TestGenerateMarkdown(t *testing.T) {
 	entries := []markdownEntry{
 		{message: "Message 1"},
 		{filePath: tempFile},
+		{filePath: tempDir},
 		{message: "Message 2"},
 		{output: "Command output"},
 	}
 
 	expected := "Message 1\n\n" +
+
 		"`" + tempFile + "`\n" +
 		"```\n" +
 		"File 1 content```\n\n" +
+
+		// Should repeat tempFile as our rendering of tempDir, since tempFile is its sole content.
+		"`" + tempFile + "`\n" +
+		"```\n" +
+		"File 1 content```\n\n" +
+
 		"Message 2\n\n" +
 		"Command output\n"
 

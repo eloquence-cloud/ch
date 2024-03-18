@@ -43,7 +43,7 @@ func (e markdownEntry) String() string {
 
 type subcommand struct {
 	name string
-	fn   func(args []string) (markdownEntry, error)
+	fn   func(args []string) ([]markdownEntry, error)
 }
 
 var subcommands = []subcommand{
@@ -65,29 +65,29 @@ func processSubcommands(args []string) ([]markdownEntry, error) {
 			if len(argWithoutComma) > 0 {
 				accumCommand = append(accumCommand, argWithoutComma)
 			}
-			entry, err := executeSubcommand(accumCommand)
+			subcommandEntries, err := executeSubcommand(accumCommand)
 			if err != nil {
 				return nil, err
 			}
-			entries = append(entries, entry)
+			entries = append(entries, subcommandEntries...)
 			accumCommand = nil
 		} else {
 			accumCommand = append(accumCommand, arg)
 		}
 	}
 	if len(accumCommand) > 0 {
-		entry, err := executeSubcommand(accumCommand)
+		subcommandEntries, err := executeSubcommand(accumCommand)
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, entry)
+		entries = append(entries, subcommandEntries...)
 	}
 	return entries, nil
 }
 
-func executeSubcommand(args []string) (markdownEntry, error) {
+func executeSubcommand(args []string) ([]markdownEntry, error) {
 	if len(args) == 0 {
-		return markdownEntry{}, fmt.Errorf("no subcommand provided")
+		return []markdownEntry{}, fmt.Errorf("no subcommand provided")
 	}
 	command := args[0]
 	var matches []subcommand
@@ -97,43 +97,49 @@ func executeSubcommand(args []string) (markdownEntry, error) {
 		}
 	}
 	if len(matches) == 0 {
-		return markdownEntry{}, fmt.Errorf("unknown subcommand: %s", command)
+		return []markdownEntry{}, fmt.Errorf("unknown subcommand: %s", command)
 	}
 	if len(matches) > 1 {
-		return markdownEntry{}, fmt.Errorf("ambiguous subcommand: %s", command)
+		return []markdownEntry{}, fmt.Errorf("ambiguous subcommand: %s", command)
 	}
 	return matches[0].fn(args[1:])
 }
 
-func saySub(args []string) (markdownEntry, error) {
+func saySub(args []string) ([]markdownEntry, error) {
 	message := strings.Join(args, " ")
-	return markdownEntry{message: message}, nil
+	return []markdownEntry{{message: message}}, nil
 }
 
-func attachSub(args []string) (markdownEntry, error) {
-	filePath := args[0]
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return markdownEntry{}, fmt.Errorf("file does not exist: %s", filePath)
+func attachSub(args []string) ([]markdownEntry, error) {
+	var entries []markdownEntry
+	for _, filePath := range args {
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			return []markdownEntry{}, fmt.Errorf("file does not exist: %s", filePath)
+		}
+		entries = append(entries, markdownEntry{filePath: filePath})
 	}
-	return markdownEntry{filePath: filePath}, nil
+	return entries, nil
 }
 
-func insertSub(args []string) (markdownEntry, error) {
-	file := args[0]
-	content, err := readFile(file)
-	if err != nil {
-		return markdownEntry{}, err
+func insertSub(args []string) ([]markdownEntry, error) {
+	var entries []markdownEntry
+	for _, file := range args {
+		content, err := readFile(file)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, markdownEntry{message: content})
 	}
-	return markdownEntry{message: content}, nil
+	return entries, nil
 }
 
-func execSub(args []string) (markdownEntry, error) {
+func execSub(args []string) ([]markdownEntry, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 	output, err := cmd.Output()
 	if err != nil {
-		return markdownEntry{}, fmt.Errorf("command execution failed: %v", err)
+		return []markdownEntry{}, fmt.Errorf("command execution failed: %v", err)
 	}
-	return markdownEntry{output: string(output)}, nil
+	return []markdownEntry{{output: string(output)}}, nil
 }
 
 func processPath(path string, markdown *strings.Builder) error {
