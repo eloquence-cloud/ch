@@ -227,13 +227,10 @@ func TestGenerateMarkdown(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	// Initialize the clipboard before running the tests
 	if err := clipboard.Init(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize clipboard: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Run the tests
 	exitCode := m.Run()
 
 	// Clean up the clipboard after the tests are done
