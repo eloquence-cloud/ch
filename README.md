@@ -23,46 +23,34 @@ This will download and install the latest version of `ch` in your `$GOPATH/bin` 
 ## Usage
 
 ```
-Usage: ch [@message_file | @ "inline message" | file | directory] ...
+ch - A tool for constructing chat messages for easy pasting into AI chat UIs.
 
-Flags:
-  -c    Copy the generated markdown to the clipboard
-  -help
-        Show usage information
+ch allows you to combine messages, file contents, and command outputs into a
+formatted markdown suitable for AI chat interactions. It provides a flexible
+and extensible syntax for creating chat messages with ease.
 
-Message files:
-  @message_file.txt   Include the contents of 'message_file.txt' as a message.
+Usage: ch [flags] subcommand [, subcommand ...]
 
-Inline messages:
-  @ "Inline message"   Include the specified text as an inline message.
+Flags (one of -c or -o is required):
+  -c           Copy the generated markdown to the clipboard
+  -o file      Write the output to the specified file
 
-Files and directories:
-  file.go              Include the contents of 'file.go' as a code block.
-  directory/           Recursively include all files in 'directory/' as code blocks.
+Subcommands:
+  say message       Emit a message (replace @<space>)
+  attach path       Attach a file or directory of files (replace bare path)
+  insert file       Insert the contents of a file (replace @file)
+  exec command      Execute a command (pass command line to bash)
+  paste             Insert the contents of the clipboard
 
-ch searches for message files in the following order:
-  1. The provided path or name
-  2. If the path has no extension, the full provided path or name with '.ch' added
-  3. If not found, and if the provided string is just a base filename with no
-     extension, then ~/.ch/<provided_name>.ch
+Comma separation rules:
+  - A comma at the end of a word ends that command and is not included in the word.
+  - A comma alone in a word ends that command and is not included as a word.
+  - A comma within a word is just part of that word.
 
 Examples:
-  ch @message.txt file1.go @ "Please review" file2.go
-  ch -c @ "Here are the changes:" @changes.txt src/
-```
-
-## Examples
-
-Include a message file, a Go file, an inline message, and another Go file:
-
-```
-ch @message.txt file1.go @ "Please review" file2.go
-```
-
-Copy the generated markdown to the clipboard with an inline message, a message file, and a directory:
-
-```
-ch -c @ "Here are the changes:" @changes.txt src/
+  ch -c say "Please review", attach file1.go, say "Thank you!"
+  ch -o output.md say "Here are the changes:", insert changes.txt, attach src/
+  ch -c exec "ls -l", say "Directory listing:", attach .
 ```
 
 ## Contributing
