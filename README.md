@@ -38,7 +38,9 @@ Flags (one of -c or -o is required):
 Subcommands:
   say message       Emit a message (replace @<space>)
   attach path       Attach a file or directory of files (replace bare path)
+                    Supports remote file paths prefixed with hostname (e.g., host:path/to/file)
   insert file       Insert the contents of a file (replace @file)
+                    Supports remote file paths prefixed with hostname (e.g., host:path/to/file)
   exec command      Execute a command (pass command line to bash)
   paste             Insert the contents of the clipboard
 
@@ -51,6 +53,8 @@ Examples:
   ch -c say "Please review", attach file1.go, say "Thank you!"
   ch -o output.md say "Here are the changes:", insert changes.txt, attach src/
   ch -c exec "ls -l", say "Directory listing:", attach .
+  ch -c attach remote-host:/path/to/file.txt, say "Remote file attached."
+  ch -c insert remote-host:/path/to/file.txt, say "Contents of remote file:"
 ```
 
 ## Contributing

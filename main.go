@@ -22,6 +22,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -30,6 +31,48 @@ import (
 
 	"golang.design/x/clipboard"
 )
+
+// Context represents the runtime context of the ch tool.
+// It encapsulates the temporary directory used for storing temporary files
+// and provides methods for managing the lifecycle of the context.
+//
+// The NewContext function should be used to create a new Context instance.
+// The returned Context should be cleaned up using the Cleanup method when
+// it is no longer needed, typically by deferring the call to Cleanup.
+//
+// Example usage:
+//
+//	ctx, err := NewContext()
+//	if err != nil {
+//	    // Handle error
+//	}
+//	defer ctx.Cleanup()
+//
+//	// Use the context for storing temporary files
+//	tempFile, err := ioutil.TempFile(ctx.TempDir, "example-")
+//	if err != nil {
+//	    // Handle error
+//	}
+//	// Perform operations with the temporary file
+//
+// The temporary directory associated with the Context is automatically
+// created when the Context is created using NewContext and is cleaned up
+// when the Cleanup method is called.
+type Context struct {
+	TempDir string
+}
+
+func NewContext() (Context, error) {
+	tempDir, err := ioutil.TempDir("", "ch-")
+	if err != nil {
+		return Context{}, fmt.Errorf("failed to create temporary directory: %v", err)
+	}
+	return Context{TempDir: tempDir}, nil
+}
+
+func (ctx *Context) Cleanup() error {
+	return os.RemoveAll(ctx.TempDir)
+}
 
 type markdownEntry struct {
 	filePath string
@@ -43,7 +86,7 @@ func (e markdownEntry) String() string {
 
 type subcommand struct {
 	name string
-	fn   func(args []string) ([]markdownEntry, error)
+	fn   func(ctx Context, args []string) ([]markdownEntry, error)
 }
 
 var subcommands = []subcommand{
@@ -56,7 +99,7 @@ var subcommands = []subcommand{
 
 //////////// processing of subcommands ///////////////
 
-func processSubcommands(args []string) ([]markdownEntry, error) {
+func processSubcommands(ctx Context, args []string) ([]markdownEntry, error) {
 	var entries []markdownEntry
 	var accumCommand []string
 	for _, arg := range args {
@@ -66,9 +109,9 @@ func processSubcommands(args []string) ([]markdownEntry, error) {
 			if len(argWithoutComma) > 0 {
 				accumCommand = append(accumCommand, argWithoutComma)
 			}
-			subcommandEntries, err := executeSubcommand(accumCommand)
+			subcommandEntries, err := executeSubcommand(ctx, accumCommand)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to execute subcommand %s: %v", accumCommand, err)
 			}
 			entries = append(entries, subcommandEntries...)
 			accumCommand = nil
@@ -77,7 +120,7 @@ func processSubcommands(args []string) ([]markdownEntry, error) {
 		}
 	}
 	if len(accumCommand) > 0 {
-		subcommandEntries, err := executeSubcommand(accumCommand)
+		subcommandEntries, err := executeSubcommand(ctx, accumCommand)
 		if err != nil {
 			return nil, err
 		}
@@ -86,7 +129,7 @@ func processSubcommands(args []string) ([]markdownEntry, error) {
 	return entries, nil
 }
 
-func executeSubcommand(args []string) ([]markdownEntry, error) {
+func executeSubcommand(ctx Context, args []string) ([]markdownEntry, error) {
 	if len(args) == 0 {
 		return []markdownEntry{}, fmt.Errorf("no subcommand provided")
 	}
@@ -103,38 +146,88 @@ func executeSubcommand(args []string) ([]markdownEntry, error) {
 	if len(matches) > 1 {
 		return []markdownEntry{}, fmt.Errorf("ambiguous subcommand: %s", command)
 	}
-	return matches[0].fn(args[1:])
+	return matches[0].fn(ctx, args[1:])
 }
 
-func saySub(args []string) ([]markdownEntry, error) {
+func saySub(ctx Context, args []string) ([]markdownEntry, error) {
 	message := strings.Join(args, " ")
 	return []markdownEntry{{message: message}}, nil
 }
 
-func attachSub(args []string) ([]markdownEntry, error) {
+func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
 	var entries []markdownEntry
 	for _, filePath := range args {
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			return []markdownEntry{}, fmt.Errorf("file does not exist: %s", filePath)
+		if strings.Contains(filePath, ":") {
+			parts := strings.SplitN(filePath, ":", 2)
+			if len(parts) == 2 {
+				hostname := parts[0]
+				remotePath := parts[1]
+				tempFile, err := copyRemoteFileToTemp(ctx, hostname, remotePath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to copy remote file: %v", err)
+				}
+				entries = append(entries, markdownEntry{filePath: tempFile})
+			} else {
+				return nil, fmt.Errorf("invalid remote file path: %s", filePath)
+			}
+		} else {
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				return nil, fmt.Errorf("file does not exist: %s", filePath)
+			}
+			entries = append(entries, markdownEntry{filePath: filePath})
 		}
-		entries = append(entries, markdownEntry{filePath: filePath})
 	}
 	return entries, nil
 }
 
-func insertSub(args []string) ([]markdownEntry, error) {
+func copyRemoteFileToTemp(ctx Context, hostname, remotePath string) (string, error) {
+	tempFile, err := ioutil.TempFile(ctx.TempDir, "file-")
+	if err != nil {
+		return "", err
+	}
+	tempFileName := tempFile.Name()
+	tempFile.Close()
+
+	cmd := exec.Command("scp", fmt.Sprintf("%s:%s", hostname, remotePath), tempFileName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to copy remote file: %v\nOutput: %s", err, string(output))
+	}
+	return tempFileName, nil
+}
+
+func insertSub(ctx Context, args []string) ([]markdownEntry, error) {
 	var entries []markdownEntry
-	for _, file := range args {
-		content, err := readFile(file)
-		if err != nil {
-			return nil, err
+	for _, filePath := range args {
+		if strings.Contains(filePath, ":") {
+			parts := strings.SplitN(filePath, ":", 2)
+			if len(parts) == 2 {
+				hostname := parts[0]
+				remotePath := parts[1]
+				tempFile, err := copyRemoteFileToTemp(ctx, hostname, remotePath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to copy remote file: %v", err)
+				}
+				content, err := readFile(tempFile)
+				if err != nil {
+					return nil, err
+				}
+				entries = append(entries, markdownEntry{message: content})
+			} else {
+				return nil, fmt.Errorf("invalid remote file path: %s", filePath)
+			}
+		} else {
+			content, err := readFile(filePath)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, markdownEntry{message: content})
 		}
-		entries = append(entries, markdownEntry{message: content})
 	}
 	return entries, nil
 }
 
-func execSub(args []string) ([]markdownEntry, error) {
+func execSub(ctx Context, args []string) ([]markdownEntry, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 	output, err := cmd.Output()
 	if err != nil {
@@ -143,7 +236,7 @@ func execSub(args []string) ([]markdownEntry, error) {
 	return []markdownEntry{{output: string(output)}}, nil
 }
 
-func pasteSub(args []string) ([]markdownEntry, error) {
+func pasteSub(ctx Context, args []string) ([]markdownEntry, error) {
 	content := string(clipboard.Read(clipboard.FmtText))
 	return []markdownEntry{{message: content}}, nil
 }
@@ -247,7 +340,9 @@ func printUsage() {
 	fmt.Println("Subcommands:")
 	fmt.Println("  say message       Emit a message (replace @<space>)")
 	fmt.Println("  attach path       Attach a file or directory of files (replace bare path)")
+	fmt.Println("                    Supports remote file paths prefixed with hostname (e.g., host:path/to/file)")
 	fmt.Println("  insert file       Insert the contents of a file (replace @file)")
+	fmt.Println("                    Supports remote file paths prefixed with hostname (e.g., host:path/to/file)")
 	fmt.Println("  exec command      Execute a command (pass command line to bash)")
 	fmt.Println("  paste             Insert the contents of the clipboard")
 	fmt.Println()
@@ -260,46 +355,9 @@ func printUsage() {
 	fmt.Println("  ch -c say \"Please review\", attach file1.go, say \"Thank you!\"")
 	fmt.Println("  ch -o output.md say \"Here are the changes:\", insert changes.txt, attach src/")
 	fmt.Println("  ch -c exec \"ls -l\", say \"Directory listing:\", attach .")
+	fmt.Println("  ch -c attach remote-host:/path/to/file.txt, say \"Remote file attached.\"")
+	fmt.Println("  ch -c insert remote-host:/path/to/file.txt, say \"Contents of remote file:\"")
 }
-
-// Upcoming
-// func printUsage() {
-// 	fmt.Println("ch - A tool for constructing chat messages for easy pasting into AI chat UIs.")
-// 	fmt.Println()
-// 	fmt.Println("ch allows you to combine messages, file contents, and command outputs into a")
-// 	fmt.Println("formatted markdown suitable for AI chat interactions. It provides a flexible")
-// 	fmt.Println("and extensible syntax for creating chat messages with ease.")
-// 	fmt.Println()
-// 	fmt.Println("Usage: ch [flags] subcommand [, subcommand ...]")
-// 	fmt.Println()
-// 	fmt.Println("Flags (one of -c or -o is required):")
-// 	fmt.Println("  -c           Copy the generated markdown to the clipboard")
-// 	fmt.Println("  -o file      Write the output to the specified file")
-// 	fmt.Println()
-// 	fmt.Println("Subcommands:")
-// 	fmt.Println("  say message       Emit a message (replace @<space>)")
-// 	fmt.Println("  attach path       Attach a file or directory of files (replace bare path)")
-// 	fmt.Println("  insert file       Insert the contents of a file (replace @file)")
-// 	fmt.Println("  exec command      Execute a command (pass command line to bash)")
-// 	fmt.Println()
-// 	fmt.Println("Custom Subcommands:")
-// 	fmt.Println("  To create a new subcommand, place either commandname.ch or commandname.sh")
-// 	fmt.Println("  in ~/.ch/commands directory.")
-// 	fmt.Println()
-// 	fmt.Println("  A .ch file contains a sequence of ch commands separated by either newline or comma.")
-// 	fmt.Println("  Arguments can be substituted by $1, $2, etc.")
-// 	fmt.Println("  Flags can be substituted by $flagname.")
-// 	fmt.Println()
-// 	fmt.Println("  Comma separation rules:")
-// 	fmt.Println("  - A comma at the end of a word ends that command and is not included in the word.")
-// 	fmt.Println("  - A comma alone in a word ends that command and is not included as a word.")
-// 	fmt.Println("  - A comma within a word is just part of that word.")
-// 	fmt.Println()
-// 	fmt.Println("Examples:")
-// 	fmt.Println("  ch -c say \"Please review\" attach file1.go, say \"Thank you!\"")
-// 	fmt.Println("  ch -o output.md say \"Here are the changes:\" insert changes.txt attach src/")
-// 	fmt.Println("  ch -c exec \"ls -l\" say \"Directory listing:\" attach .")
-// }
 
 func main() {
 	copyToClipboard := flag.Bool("c", false, "Copy the generated markdown to the clipboard")
@@ -316,10 +374,16 @@ func main() {
 		log.Fatalf("Failed to initialize clipboard: %v", err)
 	}
 
-	subcommands := flag.Args()
-	entries, err := processSubcommands(subcommands)
+	ctx, err := NewContext()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to create context: %v", err)
+	}
+	defer ctx.Cleanup()
+
+	subcommands := flag.Args()
+	entries, err := processSubcommands(ctx, subcommands)
+	if err != nil {
+		log.Fatalf("Failed to process subcommands: %v", err)
 	}
 
 	markdown := generateMarkdown(entries)
