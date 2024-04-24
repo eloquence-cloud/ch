@@ -22,7 +22,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -63,7 +62,7 @@ type Context struct {
 }
 
 func NewContext() (Context, error) {
-	tempDir, err := ioutil.TempDir("", "ch-")
+	tempDir, err := os.MkdirTemp("", "ch-")
 	if err != nil {
 		return Context{}, fmt.Errorf("failed to create temporary directory: %v", err)
 	}
@@ -190,7 +189,7 @@ func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
 }
 
 func copyRemoteFileToTemp(ctx Context, hostname, remotePath string) (string, string, error) {
-	tempFile, err := ioutil.TempFile(ctx.TempDir, "file-")
+	tempFile, err := os.CreateTemp(ctx.TempDir, "file-")
 	if err != nil {
 		return "", "", err
 	}

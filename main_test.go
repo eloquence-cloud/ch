@@ -18,21 +18,19 @@ func TestProcessSubcommands(t *testing.T) {
 		t.Fatalf("Failed to create context: %v", err)
 	}
 	defer ctx.Cleanup()
+	tempDir := ctx.TempDir
 
-	// Create temporary files
-	tempDir := os.TempDir()
+	// Create temporary files within the context's temporary directory
 	file1 := filepath.Join(tempDir, "file1.txt")
 	file2 := filepath.Join(tempDir, "file2.txt")
 	err = os.WriteFile(file1, []byte("File 1 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(file1)
 	err = os.WriteFile(file2, []byte("File 2 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(file2)
 
 	// Test with say subcommand.
 	entries, err := processSubcommands(ctx, []string{"say", "Hello world!"})
@@ -103,15 +101,17 @@ func TestProcessSubcommands(t *testing.T) {
 }
 
 func TestAttachSub(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test")
+	// Create a context for testing
+	ctx, err := NewContext()
 	if err != nil {
-		t.Fatalf("Failed to create temporary directory: %v", err)
+		t.Fatalf("Failed to create context: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer ctx.Cleanup()
 
-	file1 := filepath.Join(tempDir, "file1.txt")
-	file2 := filepath.Join(tempDir, "file2.txt")
-	dir1 := filepath.Join(tempDir, "dir1")
+	// Create temporary files and directories within the context's temporary directory
+	file1 := filepath.Join(ctx.TempDir, "file1.txt")
+	file2 := filepath.Join(ctx.TempDir, "file2.txt")
+	dir1 := filepath.Join(ctx.TempDir, "dir1")
 
 	if err := os.WriteFile(file1, []byte("File 1 content"), 0644); err != nil {
 		t.Fatalf("Failed to create temporary file: %v", err)
@@ -122,7 +122,7 @@ func TestAttachSub(t *testing.T) {
 	if err := os.Mkdir(dir1, 0755); err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	dir2 := filepath.Join(tempDir, "dir2")
+	dir2 := filepath.Join(ctx.TempDir, "dir2")
 	if err := os.Mkdir(dir2, 0755); err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
@@ -175,12 +175,6 @@ func TestAttachSub(t *testing.T) {
 		},
 	}
 
-	// Create a context for testing
-	ctx, err := NewContext()
-	if err != nil {
-		t.Fatalf("Failed to create context: %v", err)
-	}
-	defer ctx.Cleanup()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := attachSub(ctx, tt.args)
@@ -227,14 +221,15 @@ func TestPasteSub(t *testing.T) {
 }
 
 func TestGenerateMarkdown(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "test")
+	// Create a context for testing
+	ctx, err := NewContext()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create context: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer ctx.Cleanup()
 
-	// Create a temporary file for testing
+	// Create a temporary file within the context's temporary directory
+	tempDir := ctx.TempDir
 	tempFile := filepath.Join(tempDir, "file1.txt")
 	err = os.WriteFile(tempFile, []byte("File 1 content"), 0644)
 	if err != nil {
