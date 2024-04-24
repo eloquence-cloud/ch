@@ -73,14 +73,47 @@ func (ctx *Context) Cleanup() error {
 	return os.RemoveAll(ctx.TempDir)
 }
 
-type markdownEntry struct {
-	filePath string
-	message  string
-	output   string
+type markdownEntry interface {
+	renderMarkdown() string
 }
 
-func (e markdownEntry) String() string {
-	return fmt.Sprintf("{filePath: %q, message: %q, output: %q}", e.filePath, e.message, e.output)
+type messageEntry struct {
+	message string
+}
+
+func (e messageEntry) renderMarkdown() string {
+	return e.message
+}
+
+type fileEntry struct {
+	storagePath  string
+	originalPath string
+}
+
+func (e fileEntry) renderMarkdown() string {
+	var markdown strings.Builder
+
+	markdown.WriteString(fmt.Sprintf("`%s`\n", e.originalPath))
+	markdown.WriteString("```\n")
+
+	content, err := os.ReadFile(e.storagePath)
+	if err != nil {
+		log.Printf("Failed to read file %s: %v", e.storagePath, err)
+		return ""
+	}
+	markdown.Write(content)
+
+	markdown.WriteString("```\n")
+
+	return markdown.String()
+}
+
+type outputEntry struct {
+	output string
+}
+
+func (e outputEntry) renderMarkdown() string {
+	return e.output
 }
 
 type subcommand struct {
@@ -150,7 +183,7 @@ func executeSubcommand(ctx Context, args []string) ([]markdownEntry, error) {
 
 func saySub(ctx Context, args []string) ([]markdownEntry, error) {
 	message := strings.Join(args, " ")
-	return []markdownEntry{{message: message}}, nil
+	return []markdownEntry{messageEntry{message: message}}, nil
 }
 
 func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
@@ -165,23 +198,30 @@ func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to copy remote file: %v", err)
 				}
-				entries = append(entries, markdownEntry{filePath: tempFile, message: originalPath})
+				entries = append(entries, fileEntry{storagePath: tempFile, originalPath: originalPath})
 			} else {
-				return nil, fmt.Errorf("invalid remote file path: %s", filePath)
+				return nil, fmt.Errorf("invalid remote file path: %v", filePath)
 			}
 		} else {
 			fileInfo, err := os.Stat(filePath)
 			if err != nil {
-				return nil, fmt.Errorf("file does not exist: %s", filePath)
+				return nil, fmt.Errorf("file does not exist: %v", filePath)
 			}
 			if fileInfo.IsDir() {
-				var markdown strings.Builder
-				if err := processDirectory(filePath, &markdown); err != nil {
+				err := filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return err
+					}
+					if !info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
+						entries = append(entries, fileEntry{storagePath: path, originalPath: path})
+					}
+					return nil
+				})
+				if err != nil {
 					return nil, fmt.Errorf("failed to process directory: %v", err)
 				}
-				entries = append(entries, markdownEntry{message: markdown.String()})
 			} else {
-				entries = append(entries, markdownEntry{filePath: filePath})
+				entries = append(entries, fileEntry{storagePath: filePath, originalPath: filePath})
 			}
 		}
 	}
@@ -216,20 +256,20 @@ func insertSub(ctx Context, args []string) ([]markdownEntry, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to copy remote file: %v", err)
 				}
-				content, err := readFile(tempFile)
+				content, err := os.ReadFile(tempFile)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("failed to read file: %v", err)
 				}
-				entries = append(entries, markdownEntry{message: content})
+				entries = append(entries, messageEntry{message: string(content)})
 			} else {
-				return nil, fmt.Errorf("invalid remote file path: %s", filePath)
+				return nil, fmt.Errorf("invalid remote file path: %v", filePath)
 			}
 		} else {
-			content, err := readFile(filePath)
+			content, err := os.ReadFile(filePath)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to read file: %v", err)
 			}
-			entries = append(entries, markdownEntry{message: content})
+			entries = append(entries, messageEntry{message: string(content)})
 		}
 	}
 	return entries, nil
@@ -241,57 +281,12 @@ func execSub(ctx Context, args []string) ([]markdownEntry, error) {
 	if err != nil {
 		return []markdownEntry{}, fmt.Errorf("command execution failed: %v", err)
 	}
-	return []markdownEntry{{output: string(output)}}, nil
+	return []markdownEntry{outputEntry{output: string(output)}}, nil
 }
 
 func pasteSub(ctx Context, args []string) ([]markdownEntry, error) {
 	content := string(clipboard.Read(clipboard.FmtText))
-	return []markdownEntry{{message: content}}, nil
-}
-
-func processDirectory(dirPath string, markdown *strings.Builder) error {
-	files, err := os.ReadDir(dirPath)
-	if err != nil {
-		return err
-	}
-
-	for _, file := range files {
-		filePath := filepath.Join(dirPath, file.Name())
-		if file.IsDir() {
-			if err := processDirectory(filePath, markdown); err != nil {
-				return err
-			}
-		} else if !strings.HasPrefix(file.Name(), ".") {
-			if err := appendFileToMarkdown(filePath, markdown); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
-	markdown.WriteString(fmt.Sprintf("`%s`\n", filePath))
-	markdown.WriteString("```\n")
-
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
-	}
-	markdown.Write(content)
-
-	markdown.WriteString("```\n\n")
-
-	return nil
-}
-
-func readFile(path string) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
+	return []markdownEntry{messageEntry{message: content}}, nil
 }
 
 //////////// generation of markdown ///////////////
@@ -300,15 +295,8 @@ func generateMarkdown(entries []markdownEntry) string {
 	var markdown strings.Builder
 
 	for _, entry := range entries {
-		if entry.message != "" {
-			markdown.WriteString(entry.message + "\n\n")
-		} else if entry.filePath != "" {
-			if err := appendFileToMarkdown(entry.filePath, &markdown); err != nil {
-				log.Printf("Failed to process path %s: %v", entry.filePath, err)
-			}
-		} else if entry.output != "" {
-			markdown.WriteString(entry.output + "\n\n")
-		}
+		markdown.WriteString(entry.renderMarkdown())
+		markdown.WriteString("\n\n")
 	}
 
 	return strings.TrimSpace(markdown.String()) + "\n"

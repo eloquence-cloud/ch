@@ -5,25 +5,83 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"golang.design/x/clipboard"
 )
 
 func TestProcessSubcommands(t *testing.T) {
-	// Create a context for testing
 	ctx, err := NewContext()
 	if err != nil {
 		t.Fatalf("Failed to create context: %v", err)
 	}
 	defer ctx.Cleanup()
-	tempDir := ctx.TempDir
 
 	// Create temporary files within the context's temporary directory
-	file1 := filepath.Join(tempDir, "file1.txt")
-	file2 := filepath.Join(tempDir, "file2.txt")
-	err = os.WriteFile(file1, []byte("File 1 content"), 0644)
+	file1, file2 := createTempFiles(t, ctx)
+
+	testCases := []struct {
+		name     string
+		args     []string
+		expected []markdownEntry
+	}{
+		{
+			name:     "Say subcommand",
+			args:     []string{"say", "Hello world!"},
+			expected: []markdownEntry{messageEntry{message: "Hello world!"}},
+		},
+		{
+			name:     "Say subcommand with multiple words",
+			args:     []string{"say", "Hello", "world!"},
+			expected: []markdownEntry{messageEntry{message: "Hello world!"}},
+		},
+		{
+			name:     "Attach subcommand",
+			args:     []string{"attach", file1, ctx.TempDir + ",", "attach", file2},
+			expected: []markdownEntry{fileEntry{storagePath: file1, originalPath: file1}, fileEntry{storagePath: ctx.TempDir, originalPath: ctx.TempDir}, fileEntry{storagePath: file2, originalPath: file2}},
+		},
+		{
+			name:     "Insert subcommand",
+			args:     []string{"insert", file1, file2},
+			expected: []markdownEntry{messageEntry{message: "File 1 content"}, messageEntry{message: "File 2 content"}},
+		},
+		{
+			name:     "Exec subcommand",
+			args:     []string{"exec", "echo", "Exec", "output"},
+			expected: []markdownEntry{outputEntry{output: "Exec output\n"}},
+		},
+		{
+			name: "Mixed subcommands",
+			args: []string{
+				"say", "Message 1", ",", "attach", file1 + ",", "insert", file2, ",", "exec", "echo", "Exec", "output,", "say", "Message 2",
+			},
+			expected: []markdownEntry{
+				messageEntry{message: "Message 1"},
+				fileEntry{storagePath: file1, originalPath: file1},
+				messageEntry{message: "File 2 content"},
+				outputEntry{output: "Exec output\n"},
+				messageEntry{message: "Message 2"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := processSubcommands(ctx, tc.args)
+			if err != nil {
+				t.Fatalf("processSubcommands failed: %v", err)
+			}
+			if !reflect.DeepEqual(entries, tc.expected) {
+				t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", tc.expected, entries)
+			}
+		})
+	}
+}
+
+func createTempFiles(t *testing.T, ctx Context) (string, string) {
+	file1 := filepath.Join(ctx.TempDir, "file1.txt")
+	file2 := filepath.Join(ctx.TempDir, "file2.txt")
+	err := os.WriteFile(file1, []byte("File 1 content"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,77 +89,10 @@ func TestProcessSubcommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Test with say subcommand.
-	entries, err := processSubcommands(ctx, []string{"say", "Hello world!"})
-	if err != nil {
-		t.Fatalf("processSubcommands failed: %v", err)
-	}
-	expected := []markdownEntry{{message: "Hello world!"}}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
-	}
-	// Should get same result if the args are multiple words.
-	entries, err = processSubcommands(ctx, []string{"say", "Hello", "world!"})
-	if err != nil {
-		t.Fatalf("processSubcommands failed: %v", err)
-	}
-	expected = []markdownEntry{{message: "Hello world!"}}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
-	}
-
-	// Test with attach subcommand.
-	entries, err = processSubcommands(ctx, []string{"attach", file1, tempDir + ",", "attach", file2})
-	if err != nil {
-		t.Fatalf("processSubcommands failed: %v", err)
-	}
-	expected = []markdownEntry{{filePath: file1}, {filePath: tempDir}, {filePath: file2}}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
-	}
-
-	// Test with insert subcommand
-	entries, err = processSubcommands(ctx, []string{"insert", file1, file2})
-	if err != nil {
-		t.Fatalf("processSubcommands failed: %v", err)
-	}
-	expected = []markdownEntry{{message: "File 1 content"}, {message: "File 2 content"}}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
-	}
-
-	// Test with exec subcommand
-	entries, err = processSubcommands(ctx, []string{"exec", "echo", "Exec", "output"})
-	if err != nil {
-		t.Fatalf("processSubcommands failed: %v", err)
-	}
-	expected = []markdownEntry{{output: "Exec output\n"}}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
-	}
-
-	// Test with mixed subcommands
-	entries, err = processSubcommands(ctx, []string{
-		"say", "Message 1", ",", "attach", file1 + ",", "insert", file2, ",", "exec", "echo", "Exec", "output,", "say", "Message 2",
-	})
-	if err != nil {
-		t.Fatalf("processSubcommands failed: %v", err)
-	}
-	expected = []markdownEntry{
-		{message: "Message 1"},
-		{filePath: file1},
-		{message: "File 2 content"},
-		{output: "Exec output\n"},
-		{message: "Message 2"},
-	}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("processSubcommands returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
-	}
+	return file1, file2
 }
 
 func TestAttachSub(t *testing.T) {
-	// Create a context for testing
 	ctx, err := NewContext()
 	if err != nil {
 		t.Fatalf("Failed to create context: %v", err)
@@ -109,159 +100,246 @@ func TestAttachSub(t *testing.T) {
 	defer ctx.Cleanup()
 
 	// Create temporary files and directories within the context's temporary directory
-	file1 := filepath.Join(ctx.TempDir, "file1.txt")
-	file2 := filepath.Join(ctx.TempDir, "file2.txt")
-	dir1 := filepath.Join(ctx.TempDir, "dir1")
-
-	if err := os.WriteFile(file1, []byte("File 1 content"), 0644); err != nil {
-		t.Fatalf("Failed to create temporary file: %v", err)
+	file1Path := filepath.Join(ctx.TempDir, "file1.txt")
+	file2Path := filepath.Join(ctx.TempDir, "file2.txt")
+	err = os.WriteFile(file1Path, []byte("File 1 content"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create file1: %v", err)
 	}
-	if err := os.WriteFile(file2, []byte("File 2 content"), 0644); err != nil {
-		t.Fatalf("Failed to create temporary file: %v", err)
-	}
-	if err := os.Mkdir(dir1, 0755); err != nil {
-		t.Fatalf("Failed to create temporary directory: %v", err)
-	}
-	dir2 := filepath.Join(ctx.TempDir, "dir2")
-	if err := os.Mkdir(dir2, 0755); err != nil {
-		t.Fatalf("Failed to create temporary directory: %v", err)
-	}
-	file3 := filepath.Join(dir2, "file3.txt")
-	if err := os.WriteFile(file3, []byte("File 3 content"), 0644); err != nil {
-		t.Fatalf("Failed to create temporary file: %v", err)
+	err = os.WriteFile(file2Path, []byte("File 2 content"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create file2: %v", err)
 	}
 
-	tests := []struct {
-		name    string
-		args    []string
-		want    []markdownEntry
-		wantErr bool
+	subDir := filepath.Join(ctx.TempDir, "subdir")
+	err = os.Mkdir(subDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create subdirectory: %v", err)
+	}
+	file3Path := filepath.Join(subDir, "file3.txt")
+	err = os.WriteFile(file3Path, []byte("File 3 content"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create file3: %v", err)
+	}
+
+	testCases := []struct {
+		name        string
+		args        []string
+		expected    []markdownEntry
+		expectedErr error
 	}{
 		{
-			name:    "Single file",
-			args:    []string{file1},
-			want:    []markdownEntry{{filePath: file1}},
-			wantErr: false,
+			name:        "Single file",
+			args:        []string{file1Path},
+			expected:    []markdownEntry{fileEntry{storagePath: file1Path, originalPath: file1Path}},
+			expectedErr: nil,
 		},
 		{
-			name:    "Multiple files",
-			args:    []string{file1, file2},
-			want:    []markdownEntry{{filePath: file1}, {filePath: file2}},
-			wantErr: false,
+			name:        "Multiple files",
+			args:        []string{file1Path, file2Path},
+			expected:    []markdownEntry{fileEntry{storagePath: file1Path, originalPath: file1Path}, fileEntry{storagePath: file2Path, originalPath: file2Path}},
+			expectedErr: nil,
 		},
 		{
-			name:    "Directory",
-			args:    []string{dir1},
-			want:    []markdownEntry{{message: "`" + filepath.Join(dir1, "file1.txt") + "`\n```\nFile 1 content```\n\n"}},
-			wantErr: false,
+			name:        "Directory",
+			args:        []string{ctx.TempDir},
+			expected:    []markdownEntry{fileEntry{storagePath: file1Path, originalPath: file1Path}, fileEntry{storagePath: file2Path, originalPath: file2Path}, fileEntry{storagePath: file3Path, originalPath: file3Path}},
+			expectedErr: nil,
 		},
 		{
-			name:    "Directory with files",
-			args:    []string{dir2},
-			want:    []markdownEntry{{message: "`" + file3 + "`\n```\nFile 3 content```\n\n"}},
-			wantErr: false,
-		},
-		{
-			name:    "File and directory",
-			args:    []string{file1, dir1},
-			want:    []markdownEntry{{filePath: file1}, {filePath: dir1}},
-			wantErr: false,
-		},
-		{
-			name:    "Non-existent file",
-			args:    []string{"nonexistent.txt"},
-			want:    []markdownEntry{},
-			wantErr: true,
+			name:        "Non-existent file",
+			args:        []string{"nonexistent.txt"},
+			expected:    nil,
+			expectedErr: fmt.Errorf("file does not exist: nonexistent.txt"),
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := attachSub(ctx, tt.args)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("attachSub() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if len(got) != len(tt.want) {
-				t.Errorf("attachSub() returned wrong number of entries. got = %d, want %d", len(got), len(tt.want))
-				return
-			}
-			for i, entry := range got {
-				if entry.message != tt.want[i].message {
-					t.Errorf("attachSub() returned unexpected message at index %d. got = %q, want %q", i, entry.message, tt.want[i].message)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := attachSub(ctx, tc.args)
+			if tc.expectedErr != nil {
+				if err == nil || err.Error() != tc.expectedErr.Error() {
+					t.Errorf("Expected error: %v, got: %v", tc.expectedErr, err)
 				}
-				if entry.filePath != "" && !strings.HasSuffix(entry.filePath, filepath.Base(tt.want[i].filePath)) {
-					t.Errorf("attachSub() returned unexpected filePath at index %d. got = %s, want suffix %s",
-						i, entry.filePath, filepath.Base(tt.want[i].filePath))
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
 				}
+			}
+			if !reflect.DeepEqual(entries, tc.expected) {
+				t.Errorf("Expected entries: %v, got: %v", tc.expected, entries)
 			}
 		})
 	}
 }
 
 func TestPasteSub(t *testing.T) {
-	// Set clipboard content for testing
-	clipboard.Write(clipboard.FmtText, []byte("Clipboard content"))
-
-	// Create a context for testing
-	ctx, err := NewContext()
-	if err != nil {
-		t.Fatalf("Failed to create context: %v", err)
+	testCases := []struct {
+		name     string
+		content  string
+		expected []markdownEntry
+		wantErr  bool
+	}{
+		{
+			name:     "Simple text",
+			content:  "Clipboard content",
+			expected: []markdownEntry{messageEntry{message: "Clipboard content"}},
+			wantErr:  false,
+		},
+		{
+			name:     "Empty clipboard",
+			content:  "",
+			expected: []markdownEntry{messageEntry{message: ""}},
+			wantErr:  false,
+		},
+		{
+			name:     "Multiline text",
+			content:  "Line 1\nLine 2\nLine 3",
+			expected: []markdownEntry{messageEntry{message: "Line 1\nLine 2\nLine 3"}},
+			wantErr:  false,
+		},
+		{
+			name:     "Clipboard initialization failure",
+			content:  "",
+			expected: nil,
+			wantErr:  true,
+		},
 	}
-	defer ctx.Cleanup()
-	entries, err := pasteSub(ctx, nil)
-	if err != nil {
-		t.Fatalf("pasteSub failed: %v", err)
-	}
 
-	expected := []markdownEntry{{message: "Clipboard content"}}
-	if !reflect.DeepEqual(entries, expected) {
-		t.Errorf("pasteSub returned unexpected entries.\nExpected: %v\n  Actual: %v", expected, entries)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, err := NewContext()
+			if err != nil {
+				t.Fatalf("Failed to create context: %v", err)
+			}
+			defer ctx.Cleanup()
+
+			if !tc.wantErr {
+				clipboard.Write(clipboard.FmtText, []byte(tc.content))
+			} else {
+				// Simulate clipboard initialization failure
+				clipboard.Write(clipboard.FmtText, nil)
+			}
+
+			entries, err := pasteSub(ctx, nil)
+			if tc.wantErr {
+				if err == nil {
+					t.Error("Expected an error, but got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("pasteSub failed: %v", err)
+			}
+
+			if !reflect.DeepEqual(entries, tc.expected) {
+				t.Errorf("pasteSub returned unexpected entries.\nExpected: %v\n  Actual: %v", tc.expected, entries)
+			}
+		})
 	}
 }
 
 func TestGenerateMarkdown(t *testing.T) {
-	// Create a context for testing
-	ctx, err := NewContext()
-	if err != nil {
-		t.Fatalf("Failed to create context: %v", err)
+	testCases := []struct {
+		name     string
+		entries  []markdownEntry
+		expected string
+	}{
+		{
+			name: "Single message entry",
+			entries: []markdownEntry{
+				messageEntry{message: "Hello, world!"},
+			},
+			expected: "Hello, world!\n",
+		},
+		{
+			name: "Single file entry",
+			entries: []markdownEntry{
+				fileEntry{storagePath: "testdata/file.txt", originalPath: "file.txt"},
+			},
+			expected: "`file.txt`\n```\nFile content\n```\n",
+		},
+		{
+			name: "Single file entry with empty content",
+			entries: []markdownEntry{
+				fileEntry{storagePath: "testdata/empty.txt", originalPath: "empty.txt"},
+			},
+			expected: "`empty.txt`\n```\n```\n",
+		},
+		{
+			name: "Single output entry",
+			entries: []markdownEntry{
+				outputEntry{output: "Command output"},
+			},
+			expected: "Command output\n",
+		},
+		{
+			name: "Single output entry with empty output",
+			entries: []markdownEntry{
+				outputEntry{output: ""},
+			},
+			expected: "\n",
+		},
+		{
+			name: "Mixed entries",
+			entries: []markdownEntry{
+				messageEntry{message: "Message 1"},
+				fileEntry{storagePath: "testdata/file.txt", originalPath: "file.txt"},
+				outputEntry{output: "Command output"},
+				messageEntry{message: "Message 2"},
+			},
+			expected: "Message 1\n\n`file.txt`\n```\nFile content\n```\n\nCommand output\n\nMessage 2\n",
+		},
+		{
+			name: "Mixed entries with empty content",
+			entries: []markdownEntry{
+				messageEntry{message: ""},
+				fileEntry{storagePath: "testdata/empty.txt", originalPath: "empty.txt"},
+				outputEntry{output: ""},
+				messageEntry{message: ""},
+			},
+			expected: "\n\n`empty.txt`\n```\n```\n\n\n\n\n",
+		},
+		{
+			name:     "Empty entries",
+			entries:  []markdownEntry{},
+			expected: "",
+		},
 	}
-	defer ctx.Cleanup()
 
-	// Create a temporary file within the context's temporary directory
-	tempDir := ctx.TempDir
-	tempFile := filepath.Join(tempDir, "file1.txt")
-	err = os.WriteFile(tempFile, []byte("File 1 content"), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, err := NewContext()
+			if err != nil {
+				t.Fatalf("Failed to create context: %v", err)
+			}
+			defer ctx.Cleanup()
+			tempDir := ctx.TempDir
 
-	// Test with various entries
-	entries := []markdownEntry{
-		{message: "Message 1"},
-		{filePath: tempFile},
-		{filePath: tempDir},
-		{message: "Message 2"},
-		{output: "Command output"},
-	}
+			// Copy files to the temporary directory
+			for _, entry := range tc.entries {
+				if fileEntry, ok := entry.(fileEntry); ok {
+					dir := filepath.Dir(fileEntry.storagePath)
+					if err := os.MkdirAll(filepath.Join(tempDir, dir), 0755); err != nil {
+						t.Fatalf("Failed to create directory: %v", err)
+					}
+					content, err := os.ReadFile(fileEntry.storagePath)
+					if err != nil {
+						t.Fatalf("Failed to read file: %v", err)
+					}
+					if err := os.WriteFile(filepath.Join(tempDir, fileEntry.storagePath), content, 0644); err != nil {
+						t.Fatalf("Failed to write file: %v", err)
+					}
+					fileEntry.storagePath = filepath.Join(tempDir, fileEntry.storagePath)
+				}
+			}
 
-	expected := "Message 1\n\n" +
-
-		"`" + tempFile + "`\n" +
-		"```\n" +
-		"File 1 content```\n\n" +
-
-		// Should repeat tempFile as our rendering of tempDir, since tempFile is its sole content.
-		"`" + tempFile + "`\n" +
-		"```\n" +
-		"File 1 content```\n\n" +
-
-		"Message 2\n\n" +
-		"Command output\n"
-
-	markdown := generateMarkdown(entries)
-	if markdown != expected {
-		t.Errorf("generateMarkdown returned unexpected markdown.\nExpected:\n%s\n  Actual:\n%s", expected, markdown)
+			markdown := generateMarkdown(tc.entries)
+			if markdown != tc.expected {
+				t.Errorf("generateMarkdown returned unexpected markdown.\nExpected:\n%q\nActual:\n%q", tc.expected, markdown)
+			}
+		})
 	}
 }
 
@@ -273,7 +351,8 @@ func TestMain(m *testing.M) {
 	exitCode := m.Run()
 
 	// Clean up the clipboard after the tests are done
-	clipboard.Write(clipboard.FmtText, nil)
+	signal := clipboard.Write(clipboard.FmtText, nil)
+	<-signal // Wait for the signal indicating the clipboard has been overwritten
 
 	os.Exit(exitCode)
 }
