@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"golang.design/x/clipboard"
@@ -244,6 +243,15 @@ func TestPasteSub(t *testing.T) {
 }
 
 func TestGenerateMarkdown(t *testing.T) {
+	ctx, fileWithContentPath, emptyFilePath := setupTestFiles(t)
+	defer ctx.Cleanup()
+
+	specialCharFilePath := filepath.Join(ctx.TempDir, "file with spaces.txt")
+	err := os.WriteFile(specialCharFilePath, []byte("File content\n"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create file with special characters: %v", err)
+	}
+
 	testCases := []struct {
 		name     string
 		entries  []markdownEntry
@@ -257,18 +265,32 @@ func TestGenerateMarkdown(t *testing.T) {
 			expected: "Hello, world!\n",
 		},
 		{
+			name: "Single message entry with special characters",
+			entries: []markdownEntry{
+				messageEntry{message: "Hello, `world`!"},
+			},
+			expected: "Hello, `world`!\n",
+		},
+		{
 			name: "Single file entry",
 			entries: []markdownEntry{
-				fileEntry{storagePath: "file.txt", originalPath: "file.txt"},
+				fileEntry{storagePath: fileWithContentPath, originalPath: fileWithContentPath},
 			},
-			expected: "`file.txt`\n```\nFile content\n```\n",
+			expected: "`" + fileWithContentPath + "`\n```\nFile content\n```\n",
 		},
 		{
 			name: "Single file entry with empty content",
 			entries: []markdownEntry{
-				fileEntry{storagePath: "empty.txt", originalPath: "empty.txt"},
+				fileEntry{storagePath: emptyFilePath, originalPath: emptyFilePath},
 			},
-			expected: "`empty.txt`\n```\n```\n",
+			expected: "`" + emptyFilePath + "`\n```\n```\n",
+		},
+		{
+			name: "Single file entry with special characters in path",
+			entries: []markdownEntry{
+				fileEntry{storagePath: specialCharFilePath, originalPath: specialCharFilePath},
+			},
+			expected: "`" + specialCharFilePath + "`\n```\nFile content\n```\n",
 		},
 		{
 			name: "Single output entry",
@@ -288,75 +310,58 @@ func TestGenerateMarkdown(t *testing.T) {
 			name: "Mixed entries",
 			entries: []markdownEntry{
 				messageEntry{message: "Message 1"},
-				fileEntry{storagePath: "file.txt", originalPath: "file.txt"},
+				fileEntry{storagePath: fileWithContentPath, originalPath: fileWithContentPath},
 				outputEntry{output: "Command output"},
 				messageEntry{message: "Message 2"},
 			},
-			expected: "Message 1\n\n`file.txt`\n```\nFile content\n```\n\nCommand output\n\nMessage 2\n",
+			expected: "Message 1\n\n`" + fileWithContentPath + "`\n```\nFile content\n```\n\nCommand output\n\nMessage 2\n",
 		},
 		{
 			name: "Mixed entries with empty content",
 			entries: []markdownEntry{
 				messageEntry{message: ""},
-				fileEntry{storagePath: "empty.txt", originalPath: "empty.txt"},
+				fileEntry{storagePath: emptyFilePath, originalPath: emptyFilePath},
 				outputEntry{output: ""},
 				messageEntry{message: ""},
 			},
-			expected: "\n\n`empty.txt`\n```\n```\n\n\n\n\n",
+			expected: "`" + emptyFilePath + "`\n```\n```\n",
 		},
 		{
 			name:     "Empty entries",
 			entries:  []markdownEntry{},
-			expected: "",
+			expected: "\n",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, err := NewContext()
-			if err != nil {
-				t.Fatalf("Failed to create context: %v", err)
-			}
-			defer ctx.Cleanup()
-
-			var entries []markdownEntry
-			for _, entry := range tc.entries {
-				switch e := entry.(type) {
-				case messageEntry:
-					entries = append(entries, e)
-				case fileEntry:
-					filePath := filepath.Join(ctx.TempDir, e.storagePath)
-					dir := filepath.Dir(filePath)
-					if err := os.MkdirAll(dir, 0755); err != nil {
-						t.Fatalf("Failed to create directory: %v", err)
-					}
-					content := []byte("File content")
-					if e.storagePath == "empty.txt" {
-						content = []byte{}
-					}
-					if err := os.WriteFile(filePath, content, 0644); err != nil {
-						t.Fatalf("Failed to create file: %v", err)
-					}
-					entries = append(entries, fileEntry{storagePath: filePath, originalPath: e.originalPath})
-				case outputEntry:
-					entries = append(entries, e)
-				default:
-					t.Fatalf("Unknown entry type: %T", e)
-				}
-			}
-
-			markdown := generateMarkdown(entries)
-			expected := tc.expected
-			for _, entry := range entries {
-				if fe, ok := entry.(fileEntry); ok {
-					expected = strings.ReplaceAll(expected, fe.originalPath, fe.storagePath)
-				}
-			}
-			if markdown != expected {
-				t.Errorf("generateMarkdown returned unexpected markdown.\nExpected:\n%q\nActual:\n%q", expected, markdown)
+			markdown := generateMarkdown(tc.entries)
+			if markdown != tc.expected {
+				t.Errorf("Unexpected markdown generated for %q.\nExpected:\n%q\nActual:\n%q", tc.name, tc.expected, markdown)
 			}
 		})
 	}
+}
+
+func setupTestFiles(t *testing.T) (Context, string, string) {
+	ctx, err := NewContext()
+	if err != nil {
+		t.Fatalf("Failed to create context: %v", err)
+	}
+
+	fileWithContentPath := filepath.Join(ctx.TempDir, "file.txt")
+	err = os.WriteFile(fileWithContentPath, []byte("File content\n"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create file with content: %v", err)
+	}
+
+	emptyFilePath := filepath.Join(ctx.TempDir, "empty.txt")
+	err = os.WriteFile(emptyFilePath, []byte{}, 0644)
+	if err != nil {
+		t.Fatalf("Failed to create empty file: %v", err)
+	}
+
+	return ctx, fileWithContentPath, emptyFilePath
 }
 
 func TestMain(m *testing.M) {
@@ -367,8 +372,7 @@ func TestMain(m *testing.M) {
 	exitCode := m.Run()
 
 	// Clean up the clipboard after the tests are done
-	signal := clipboard.Write(clipboard.FmtText, nil)
-	<-signal // Wait for the signal indicating the clipboard has been overwritten
+	clipboard.Write(clipboard.FmtText, nil)
 
 	os.Exit(exitCode)
 }

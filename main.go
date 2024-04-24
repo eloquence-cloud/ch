@@ -74,6 +74,8 @@ func (ctx *Context) Cleanup() error {
 }
 
 type markdownEntry interface {
+	// renderMarkdown returns the markdown representation of the entry.
+	// This should end with a single newline.
 	renderMarkdown() string
 }
 
@@ -82,7 +84,7 @@ type messageEntry struct {
 }
 
 func (e messageEntry) renderMarkdown() string {
-	return e.message
+	return strings.TrimSpace(e.message) + "\n"
 }
 
 type fileEntry struct {
@@ -113,7 +115,7 @@ type outputEntry struct {
 }
 
 func (e outputEntry) renderMarkdown() string {
-	return e.output
+	return strings.TrimSpace(e.output) + "\n"
 }
 
 type subcommand struct {
@@ -289,14 +291,17 @@ func pasteSub(ctx Context, args []string) ([]markdownEntry, error) {
 	return []markdownEntry{messageEntry{message: content}}, nil
 }
 
-//////////// generation of markdown ///////////////
-
+// generateMarkdown concatenates the markdown for entries with an extra newline of separation.
+// It returns a string with no whitespace at the front and exactly one newline at the end.
+// If entries is empty, it returns "\n".
 func generateMarkdown(entries []markdownEntry) string {
 	var markdown strings.Builder
 
 	for _, entry := range entries {
 		markdown.WriteString(entry.renderMarkdown())
-		markdown.WriteString("\n\n")
+		// renderMarkdown is specified to return a string ending with a newline.
+		// Add a newline as a paragraph break.
+		markdown.WriteString("\n")
 	}
 
 	return strings.TrimSpace(markdown.String()) + "\n"
