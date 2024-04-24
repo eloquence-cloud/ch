@@ -162,11 +162,11 @@ func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
 			if len(parts) == 2 {
 				hostname := parts[0]
 				remotePath := parts[1]
-				tempFile, err := copyRemoteFileToTemp(ctx, hostname, remotePath)
+				tempFile, originalPath, err := copyRemoteFileToTemp(ctx, hostname, remotePath)
 				if err != nil {
 					return nil, fmt.Errorf("failed to copy remote file: %v", err)
 				}
-				entries = append(entries, markdownEntry{filePath: tempFile})
+				entries = append(entries, markdownEntry{filePath: tempFile, message: originalPath})
 			} else {
 				return nil, fmt.Errorf("invalid remote file path: %s", filePath)
 			}
@@ -180,10 +180,10 @@ func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
 	return entries, nil
 }
 
-func copyRemoteFileToTemp(ctx Context, hostname, remotePath string) (string, error) {
+func copyRemoteFileToTemp(ctx Context, hostname, remotePath string) (string, string, error) {
 	tempFile, err := ioutil.TempFile(ctx.TempDir, "file-")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	tempFileName := tempFile.Name()
 	tempFile.Close()
@@ -191,9 +191,9 @@ func copyRemoteFileToTemp(ctx Context, hostname, remotePath string) (string, err
 	cmd := exec.Command("scp", fmt.Sprintf("%s:%s", hostname, remotePath), tempFileName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to copy remote file: %v\nOutput: %s", err, string(output))
+		return "", "", fmt.Errorf("failed to copy remote file: %v\nOutput: %s", err, string(output))
 	}
-	return tempFileName, nil
+	return tempFileName, fmt.Sprintf("%s:%s", hostname, remotePath), nil
 }
 
 func insertSub(ctx Context, args []string) ([]markdownEntry, error) {
@@ -204,7 +204,7 @@ func insertSub(ctx Context, args []string) ([]markdownEntry, error) {
 			if len(parts) == 2 {
 				hostname := parts[0]
 				remotePath := parts[1]
-				tempFile, err := copyRemoteFileToTemp(ctx, hostname, remotePath)
+				tempFile, _, err := copyRemoteFileToTemp(ctx, hostname, remotePath)
 				if err != nil {
 					return nil, fmt.Errorf("failed to copy remote file: %v", err)
 				}
@@ -241,23 +241,6 @@ func pasteSub(ctx Context, args []string) ([]markdownEntry, error) {
 	return []markdownEntry{{message: content}}, nil
 }
 
-func processPath(path string, markdown *strings.Builder) error {
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("path not found: %s", path)
-	}
-
-	if fileInfo.IsDir() {
-		return processDirectory(path, markdown)
-	}
-
-	if !strings.HasPrefix(fileInfo.Name(), ".") {
-		return appendFileToMarkdown(path, markdown)
-	}
-
-	return nil
-}
-
 func processDirectory(dirPath string, markdown *strings.Builder) error {
 	files, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -280,13 +263,17 @@ func processDirectory(dirPath string, markdown *strings.Builder) error {
 	return nil
 }
 
-func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
-	content, err := os.ReadFile(filePath)
+func appendFileToMarkdown(entry markdownEntry, markdown *strings.Builder) error {
+	content, err := os.ReadFile(entry.filePath)
 	if err != nil {
 		return err
 	}
 
-	markdown.WriteString(fmt.Sprintf("`%s`\n", filePath))
+	if entry.message != "" {
+		markdown.WriteString(fmt.Sprintf("`%s`\n", entry.message))
+	} else {
+		markdown.WriteString(fmt.Sprintf("`%s`\n", entry.filePath))
+	}
 	markdown.WriteString("```\n")
 	markdown.WriteString(string(content))
 	markdown.WriteString("```\n\n")
@@ -311,7 +298,7 @@ func generateMarkdown(entries []markdownEntry) string {
 		if entry.message != "" {
 			markdown.WriteString(entry.message + "\n\n")
 		} else if entry.filePath != "" {
-			if err := processPath(entry.filePath, &markdown); err != nil {
+			if err := appendFileToMarkdown(entry, &markdown); err != nil {
 				log.Printf("Failed to process path %s: %v", entry.filePath, err)
 			}
 		} else if entry.output != "" {
@@ -335,7 +322,8 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Flags (one of -c or -o is required):")
 	fmt.Println("  -c           Copy the generated markdown to the clipboard")
-	fmt.Println("  -o file      Write the output to the specified file")
+	fmt.Println("  -o file      Write the output to the specified file (overwriting).")
+	fmt.Println("  -o -         Write the output to stdout.")
 	fmt.Println()
 	fmt.Println("Subcommands:")
 	fmt.Println("  say message       Emit a message (replace @<space>)")
@@ -368,6 +356,10 @@ func main() {
 	if *helpFlag {
 		printUsage()
 		return
+	}
+
+	if !*copyToClipboard && *outputFile == "" {
+		log.Fatal("Either -c or -o must be specified")
 	}
 
 	if err := clipboard.Init(); err != nil {
