@@ -304,7 +304,7 @@ func generateMarkdown(entries []markdownEntry) string {
 		if entry.message != "" {
 			markdown.WriteString(entry.message + "\n\n")
 		} else if entry.filePath != "" {
-			if err := appendFileToMarkdown(entry, &markdown); err != nil {
+			if err := appendFileToMarkdown(entry.filePath, &markdown); err != nil {
 				log.Printf("Failed to process path %s: %v", entry.filePath, err)
 			}
 		} else if entry.output != "" {
