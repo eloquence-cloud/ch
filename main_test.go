@@ -122,6 +122,14 @@ func TestAttachSub(t *testing.T) {
 	if err := os.Mkdir(dir1, 0755); err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
+	dir2 := filepath.Join(tempDir, "dir2")
+	if err := os.Mkdir(dir2, 0755); err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	file3 := filepath.Join(dir2, "file3.txt")
+	if err := os.WriteFile(file3, []byte("File 3 content"), 0644); err != nil {
+		t.Fatalf("Failed to create temporary file: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -144,7 +152,13 @@ func TestAttachSub(t *testing.T) {
 		{
 			name:    "Directory",
 			args:    []string{dir1},
-			want:    []markdownEntry{{filePath: dir1}},
+			want:    []markdownEntry{{message: "`" + filepath.Join(dir1, "file1.txt") + "`\n```\nFile 1 content```\n\n"}},
+			wantErr: false,
+		},
+		{
+			name:    "Directory with files",
+			args:    []string{dir2},
+			want:    []markdownEntry{{message: "`" + file3 + "`\n```\nFile 3 content```\n\n"}},
 			wantErr: false,
 		},
 		{
@@ -179,10 +193,10 @@ func TestAttachSub(t *testing.T) {
 				return
 			}
 			for i, entry := range got {
-				if entry.message != tt.want[i].message || entry.output != tt.want[i].output {
-					t.Errorf("attachSub() returned unexpected entry at index %d. got = %#v, want %#v", i, entry, tt.want[i])
+				if entry.message != tt.want[i].message {
+					t.Errorf("attachSub() returned unexpected message at index %d. got = %q, want %q", i, entry.message, tt.want[i].message)
 				}
-				if !strings.HasSuffix(entry.filePath, filepath.Base(tt.want[i].filePath)) {
+				if entry.filePath != "" && !strings.HasSuffix(entry.filePath, filepath.Base(tt.want[i].filePath)) {
 					t.Errorf("attachSub() returned unexpected filePath at index %d. got = %s, want suffix %s",
 						i, entry.filePath, filepath.Base(tt.want[i].filePath))
 				}

@@ -171,10 +171,19 @@ func attachSub(ctx Context, args []string) ([]markdownEntry, error) {
 				return nil, fmt.Errorf("invalid remote file path: %s", filePath)
 			}
 		} else {
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			fileInfo, err := os.Stat(filePath)
+			if err != nil {
 				return nil, fmt.Errorf("file does not exist: %s", filePath)
 			}
-			entries = append(entries, markdownEntry{filePath: filePath})
+			if fileInfo.IsDir() {
+				var markdown strings.Builder
+				if err := processDirectory(filePath, &markdown); err != nil {
+					return nil, fmt.Errorf("failed to process directory: %v", err)
+				}
+				entries = append(entries, markdownEntry{message: markdown.String()})
+			} else {
+				entries = append(entries, markdownEntry{filePath: filePath})
+			}
 		}
 	}
 	return entries, nil
@@ -263,19 +272,16 @@ func processDirectory(dirPath string, markdown *strings.Builder) error {
 	return nil
 }
 
-func appendFileToMarkdown(entry markdownEntry, markdown *strings.Builder) error {
-	content, err := os.ReadFile(entry.filePath)
+func appendFileToMarkdown(filePath string, markdown *strings.Builder) error {
+	markdown.WriteString(fmt.Sprintf("`%s`\n", filePath))
+	markdown.WriteString("```\n")
+
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
 	}
+	markdown.Write(content)
 
-	if entry.message != "" {
-		markdown.WriteString(fmt.Sprintf("`%s`\n", entry.message))
-	} else {
-		markdown.WriteString(fmt.Sprintf("`%s`\n", entry.filePath))
-	}
-	markdown.WriteString("```\n")
-	markdown.WriteString(string(content))
 	markdown.WriteString("```\n\n")
 
 	return nil
@@ -383,13 +389,13 @@ func main() {
 	if *copyToClipboard {
 		clipboard.Write(clipboard.FmtText, []byte(markdown))
 		fmt.Println("Markdown copied to the clipboard.")
-	} else if *outputFile != "" {
+	} else if *outputFile == "-" {
+		fmt.Print(markdown)
+	} else {
 		if err := os.WriteFile(*outputFile, []byte(markdown), 0644); err != nil {
 			log.Printf("Failed to write output to file: %v", err)
 		} else {
 			fmt.Printf("Markdown written to file: %s\n", *outputFile)
 		}
-	} else {
-		fmt.Println(markdown)
 	}
 }
